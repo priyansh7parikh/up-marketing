@@ -1,19 +1,74 @@
-const express = require ('express')
-const bodyParser = require('body-parser')
+const path = require('node:path');
+const fs = require('node:fs');
+const express = require('express');
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
+const mongoose = require('mongoose');
+const auth = require('./lib/auth');
 
-const app = express();
-// bodyParser.urlencoded
+function createApp({ mongoUrl, sessionSecret, production = false, api = express.Router() }) {
+  if (!sessionSecret || sessionSecret.length < 32) throw new Error('SESSION_SECRET must be at least 32 characters (e.g. `openssl rand -hex 32`)');
+  const app = express();
+  app.disable('x-powered-by');
+  app.set('trust proxy', 1); // behind Render's proxy: needed for secure cookies and req.ip
 
+  app.use((req, res, next) => {
+    res.set({
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY', // no clickjacking via iframes
+      'Referrer-Policy': 'same-origin',
+      'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      ...(production && { 'Strict-Transport-Security': 'max-age=31536000' }),
+    });
+    next();
+  });
 
-const port = 3000;
+  // CSRF: a cross-site page can only send GET/HEAD/POST with form-like bodies without a CORS preflight (which we never
+  // allow). PUT/PATCH/DELETE always preflight, so requiring JSON on POST (plus SameSite cookies) blocks forged requests.
+  app.use('/api', (req, res, next) => (
+    req.method !== 'POST' || req.is('application/json') ? next() : res.status(415).json({ error: 'JSON only' })
+  ));
+  app.use(express.json({ limit: '100kb' })); // shortcut: the scan route will get its own larger limit for photos
 
-app.get('/',(req,res,next)=>{
-    console.log(`at home`)
+  const store = MongoStore.create({ mongoUrl, ttl: 30 * 24 * 3600 });
+  app.locals.sessionStore = store; // so tests/shutdown can close its connection
+  app.use(session({
+    name: 'upm.sid',
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    store,
+    cookie: { httpOnly: true, sameSite: 'lax', secure: production, maxAge: 30 * 24 * 3600 * 1000 },
+  }));
 
-})
+  app.use('/api/auth', auth.router);
+  app.use('/api', auth.requireAuth);
+  app.use('/api', api); // phase 3 passes the real routes here
+  app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
-// app.post('')
+  const web = path.join(__dirname, '..', 'web', 'dist');
+  if (fs.existsSync(web)) {
+    app.use(express.static(web));
+    app.get('*', (req, res) => res.sendFile(path.join(web, 'index.html')));
+  }
 
-app.listen(port , ()=>{
-    console.log("working")
-})
+  app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+    if (err.name === 'ValidationError' || err.name === 'CastError') return res.status(400).json({ error: err.message });
+    if (err.status && err.status < 500) return res.status(err.status).json({ error: err.expose === false ? 'Bad request' : err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Something went wrong' });
+  });
+  return app;
+}
+
+if (require.main === module) {
+  const { MONGO_URL = 'mongodb://127.0.0.1:27017/upmarketing', SESSION_SECRET, PORT = 3000, NODE_ENV } = process.env;
+  if (!SESSION_SECRET) throw new Error('Set SESSION_SECRET');
+  mongoose.connect(MONGO_URL)
+    .then(() => auth.seedAdmin())
+    .then(() => createApp({ mongoUrl: MONGO_URL, sessionSecret: SESSION_SECRET, production: NODE_ENV === 'production' })
+      .listen(PORT, () => console.log(`Up-Marketing on :${PORT}`)))
+    .catch((e) => { console.error(e.message); process.exit(1); });
+}
+
+module.exports = { createApp };
