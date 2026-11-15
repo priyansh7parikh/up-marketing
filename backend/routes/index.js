@@ -1,8 +1,8 @@
 // All logged-in API routes. Writes go through doc.save()/doc.deleteOne() so the audit log sees them.
 const express = require('express');
 const mongoose = require('mongoose');
-const { requireRole } = require('../lib/auth');
-const { asUser } = require('../lib/audit');
+const { requireRole, hashPassword } = require('../lib/auth');
+const { asUser, AuditLog } = require('../lib/audit');
 const { PRODUCTS, day, summarizeAll, statement } = require('../lib/balances');
 const { normalizePhone, MOBILE, Customer, Product, Order, Collection, Settlement, Settings, User, Team, Phera } = require('../models');
 
@@ -66,7 +66,7 @@ api.put('/products/:key', admin, h(async (req, res) => {
   const p = await Product.findOne({ key: String(req.params.key) });
   if (!p) return notFound(res);
   const before = { price: p.price, partyPrice: p.partyPrice };
-  p.set(pick(req.body, ['name', 'nameGu', 'price', 'partyPrice']));
+  p.set(pick(req.body, ['name', 'nameGu', 'price', 'partyPrice', 'active']));
   await p.save();
   // First real price: bill the orders that were saved while this vessel had no price. A later price change never touches old orders.
   let rebilled = 0;
@@ -172,8 +172,17 @@ async function priceOrder(order) {
   order.total = (goods + Math.round((order.deliveryCharge || 0) * 100)) / 100;
 }
 
+// A switched-off item can't be given out in larger numbers than before; old entries with it still save.
+const counts = (v) => Object.fromEntries(PRODUCTS.map((p) => [p, v?.[p] || 0]));
+async function checkSelling(before, after) {
+  const off = (await Product.find({ active: false }).lean()).filter((p) => (after?.[p.key] || 0) > before[p.key]);
+  if (off.length) throw Object.assign(new Error(`${off.map((p) => p.name).join(', ')} is switched off. Switch it on under Admin to give it out.`), { status: 400 });
+}
+
 async function saveOrder(order, body) {
+  const before = counts(order.qty);
   order.set(pick(body, ORDER_FIELDS));
+  await checkSelling(before, order.qty);
   if (order.dueDate === '') order.dueDate = undefined;
   if (order.isModified('customer') && !(await Customer.exists({ _id: order.customer }))) {
     throw Object.assign(new Error('Unknown customer'), { status: 400 });
@@ -274,7 +283,9 @@ const withSold = (p) => ({ ...p, sold: Object.fromEntries(PRODUCTS.map((k) => [k
 const pheraPeople = (q) => q.populate('team', 'name').populate('createdBy updatedBy', who);
 
 async function savePhera(p, body) {
+  const before = counts(p.filledOut);
   p.set(pick(body, PHERA_FIELDS));
+  await checkSelling(before, p.filledOut);
   if (p.endTime === '') p.endTime = undefined;
   if (p.isModified('team') && !(await Team.exists({ _id: p.team }))) throw Object.assign(new Error('Unknown team'), { status: 400 });
   await p.save();
@@ -304,6 +315,85 @@ api.delete('/pheras/:id', admin, h(async (req, res) => {
   if (!p) return notFound(res);
   await p.deleteOne();
   res.json({ ok: true });
+}));
+
+// ---- settle (admin): close what will never be collected, as its own ledger line, never by editing the order ----
+api.post('/settlements', admin, h(async (req, res) => {
+  const body = pick(req.body, ['customer', 'amount', 'lost', 'reason']);
+  if (!(await Customer.exists({ _id: String(body.customer) }))) return res.status(400).json({ error: 'Unknown customer' });
+  if (!(body.amount > 0) && !PRODUCTS.some((p) => body.lost?.[p] > 0)) return res.status(400).json({ error: 'Enter an amount to write off or items to mark as lost' });
+  res.status(201).json(await Settlement.create({ ...body, date: today() }));
+}));
+
+api.delete('/settlements/:id', admin, h(async (req, res) => {
+  const s = await Settlement.findById(req.params.id);
+  if (!s) return notFound(res);
+  await s.deleteOne();
+  res.json({ ok: true });
+}));
+
+// ---- staff users (admin) ----
+const publicUser = (u) => ({ _id: u._id, username: u.username, name: u.name, role: u.role, active: u.active });
+// Passwords never go near the audit log, so user changes are logged by hand with just the facts.
+const logUser = (req, action, u, changes) => AuditLog.create({
+  by: req.user.id, byName: req.user.name, role: req.user.role, model: 'User', docId: u._id, action,
+  ...(action === 'create' ? { snapshot: publicUser(u) } : { changes }),
+});
+
+api.get('/users', admin, h(async (req, res) => res.json((await User.find().sort('name')).map(publicUser))));
+
+api.post('/users', admin, h(async (req, res) => {
+  const { username, name, role, password } = req.body || {};
+  const u = await User.create({ username, name, role, passwordHash: await hashPassword(password) });
+  await logUser(req, 'create', u);
+  res.status(201).json(publicUser(u));
+}));
+
+api.put('/users/:id', admin, h(async (req, res) => {
+  const u = await User.findById(req.params.id);
+  if (!u) return notFound(res);
+  const before = publicUser(u);
+  const body = pick(req.body, ['name', 'role', 'active']);
+  const losesAdmin = u.role === 'admin' && u.active && (body.active === false || (body.role && body.role !== 'admin'));
+  if (losesAdmin && String(u._id) === req.user.id) return res.status(400).json({ error: 'You cannot remove your own admin access' });
+  if (losesAdmin && (await User.countDocuments({ role: 'admin', active: true })) <= 1) return res.status(400).json({ error: 'At least one admin must stay active' });
+  u.set(body);
+  if (req.body?.password) u.passwordHash = await hashPassword(req.body.password);
+  await u.save();
+  const changes = Object.fromEntries(Object.keys(body).filter((k) => before[k] !== u[k]).map((k) => [k, { from: before[k], to: u[k] }]));
+  if (req.body?.password) changes.password = { from: '•••', to: 'reset' };
+  if (Object.keys(changes).length) await logUser(req, 'update', u, changes);
+  res.json(publicUser(u));
+}));
+
+// ---- edit history (admin) ----
+api.get('/audit', admin, h(async (req, res) => {
+  const filter = {};
+  if (req.query.role === 'employee') filter.role = 'employee';
+  const logs = await AuditLog.find(filter).sort('-at').limit(300).lean();
+
+  // Say what each entry is about in words: "Order · Nirav · 2026-11-15".
+  const ids = (model) => logs.filter((l) => l.model === model).map((l) => l.docId);
+  const load = async (M, fields) => new Map((await M.find({ _id: mongoose.trusted({ $in: ids(M.modelName) }) }, fields).lean()).map((d) => [String(d._id), d]));
+  const [orders, cols, sets, pheras, custs, teams, prods] = await Promise.all([
+    load(Order, 'customer date'), load(Collection, 'customer date'), load(Settlement, 'customer date'),
+    load(Phera, 'team date'), load(Customer, 'name'), load(Team, 'name'), load(Product, 'name'),
+  ]);
+  const live = { Order: orders, Collection: cols, Settlement: sets, Phera: pheras, Customer: custs, Team: teams, Product: prods };
+  const doc = (l) => live[l.model]?.get(String(l.docId)) || l.snapshot || {};
+  const custIds = [...new Set(logs.map((l) => String(doc(l).customer || '')).filter(Boolean))];
+  const teamIds = [...new Set(logs.map((l) => String(doc(l).team || '')).filter(Boolean))];
+  const names = new Map([
+    ...(await Customer.find({ _id: mongoose.trusted({ $in: custIds }) }, 'name').lean()),
+    ...(await Team.find({ _id: mongoose.trusted({ $in: teamIds }) }, 'name').lean()),
+  ].map((d) => [String(d._id), d.name]));
+  const WORD = { Order: 'Order', Collection: 'Return', Settlement: 'Settlement', Phera: 'Phera', Customer: 'Customer', Team: 'Team', Product: 'Price', Settings: 'Payment settings', User: 'Staff user' };
+
+  res.json(logs.map((l) => {
+    const d = doc(l);
+    const about = [names.get(String(d.customer || d.team || '')), d.name, d.date].filter(Boolean).join(' · ');
+    return { _id: l._id, at: l.at, byName: l.byName || 'system', role: l.role, action: l.action, what: WORD[l.model] || l.model, about, changes: l.changes || null };
+  }));
 }));
 
 module.exports = { api, seedProducts, fixCustomerPhones };

@@ -34,7 +34,7 @@ function Teams() {
 // Admin only (the server enforces it too): prices and the business/UPI details.
 export default function Settings() {
   const { products, settings, reloadMeta, user } = useApp();
-  const [prices, setPrices] = useState(Object.fromEntries(products.map((p) => [p.key, { price: p.price, partyPrice: p.partyPrice || 0 }])));
+  const [prices, setPrices] = useState(Object.fromEntries(products.map((p) => [p.key, { price: p.price, partyPrice: p.partyPrice || 0, active: p.active !== false }])));
   const [biz, setBiz] = useState({ upiVpa: '', ...settings });
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -46,9 +46,9 @@ export default function Settings() {
     setBusy(true);
     setMsg(null);
     try {
-      const want = (p) => ({ price: Number(prices[p.key].price), partyPrice: Number(prices[p.key].partyPrice) });
-      if (products.some((p) => Object.values(want(p)).some((n) => !Number.isFinite(n) || n < 0))) throw new Error('Prices must be numbers, 0 or more.');
-      const changed = products.filter((p) => want(p).price !== p.price || want(p).partyPrice !== (p.partyPrice || 0));
+      const want = (p) => ({ price: Number(prices[p.key].price), partyPrice: Number(prices[p.key].partyPrice), active: prices[p.key].active });
+      if (products.some((p) => [want(p).price, want(p).partyPrice].some((n) => !Number.isFinite(n) || n < 0))) throw new Error('Prices must be numbers, 0 or more.');
+      const changed = products.filter((p) => want(p).price !== p.price || want(p).partyPrice !== (p.partyPrice || 0) || want(p).active !== (p.active !== false));
       const saved = await Promise.all(changed.map((p) => api('PUT', `/products/${p.key}`, want(p))));
       const rebilled = saved.reduce((n, p) => n + (p.rebilled || 0), 0);
       await api('PUT', '/settings', { upiVpa: biz.upiVpa.trim() });
@@ -59,9 +59,8 @@ export default function Settings() {
   const setB = (k) => (e) => setBiz({ ...biz, [k]: e.target.value });
 
   return (
-    <div className="max-w-2xl space-y-8">
+    <div className="space-y-8">
     <form onSubmit={save} className="space-y-4">
-      <h1 className="h1">Admin</h1>
       <fieldset className="card space-y-3">
         <legend className="label px-1">Prices (₹ each)</legend>
         <div className="grid grid-cols-[1fr_6.5rem_6.5rem] items-center gap-x-3 gap-y-2 sm:grid-cols-[1fr_9rem_9rem]">
@@ -70,7 +69,15 @@ export default function Settings() {
           <span className="label mb-0">Party order</span>
           {products.map((p) => (
             <Fragment key={p.key}>
-              <span className="font-semibold">{p.name}</span>
+              <span className="flex flex-col items-start gap-1">
+                <span className={`font-semibold ${prices[p.key].active ? '' : 'text-faint line-through'}`}>{p.name}</span>
+                <button type="button" role="switch" aria-checked={prices[p.key].active} aria-label={`Selling ${p.name}`}
+                  onClick={() => setPrices({ ...prices, [p.key]: { ...prices[p.key], active: !prices[p.key].active } })}
+                  className={`chip cursor-pointer ${prices[p.key].active ? 'chip-ok' : ''}`}>
+                  <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${prices[p.key].active ? 'bg-ok' : 'bg-faint'}`} />
+                  {prices[p.key].active ? 'Selling' : 'Off'}
+                </button>
+              </span>
               {[['price', 'regular'], ['partyPrice', 'party order']].map(([field, word]) => (
                 <input key={field} className="input" inputMode="decimal" required aria-label={`${p.name} ${word} price`}
                   value={prices[p.key][field]} onChange={(e) => setPrices({ ...prices, [p.key]: { ...prices[p.key], [field]: e.target.value } })} />
@@ -78,7 +85,7 @@ export default function Settings() {
             </Fragment>
           ))}
         </div>
-        <p className="text-xs text-muted">Each order bills from the Regular or the Party order list, whichever type the order is. Changing a price applies to new orders only. Orders made while an item had no price are billed when you first set it.</p>
+        <p className="text-xs text-muted">Each order bills from the Regular or the Party order list, whichever type the order is. Changing a price applies to new orders only. Orders made while an item had no price are billed when you first set it. Tap Selling / Off to stop giving out an item: it disappears from new orders and pheras, but customers can still return the ones they hold.</p>
       </fieldset>
       <fieldset className="card grid gap-4 sm:grid-cols-2">
         <legend className="label px-1">Payment</legend>

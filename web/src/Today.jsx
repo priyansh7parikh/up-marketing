@@ -89,7 +89,7 @@ export default function Today() {
   const lateOnes = list.filter((c) => c.qty.daysLate > 0);
   const owing = list.filter((c) => c.owed > 0);
   const pending = list.filter((c) => c.pending).sort((a, b) => (a.oldestDate || '9').localeCompare(b.oldestDate || '9'));
-  const unpriced = products.filter((p) => !p.price || !p.partyPrice);
+  const unpriced = products.filter((p) => p.active !== false && (!p.price || !p.partyPrice));
   const period = view === 'week' ? 'this week' : 'today';
 
   const teams = Object.values(ph.reduce((acc, p) => {

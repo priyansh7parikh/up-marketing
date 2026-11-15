@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api.js';
 import { AppCtx, Field, Icon, Status, go, initials, useApp, useLoad, useRoute } from './ui.jsx';
-import { CustomerDetail, Customers } from './Customers.jsx';
+import { CustomerDetail, Customers, SettleForm } from './Customers.jsx';
 import { OrderForm, Orders } from './Orders.jsx';
 import Today from './Today.jsx';
 import { PendingQty, Ughrani } from './Pending.jsx';
 import { PheraForm, Pheras } from './Pheras.jsx';
 import { ReturnForm, Returns } from './Returns.jsx';
-import Settings from './Settings.jsx';
+import Admin, { Password } from './Admin.jsx';
 
 function Logo() {
   return (
@@ -88,7 +88,10 @@ function Shell({ user, onLogout, active, routeKey, showFab, children }) {
             <span className="block truncate font-semibold text-white">{user.name}</span>
             <span className="block text-xs capitalize">{user.role}</span>
           </span>
-          <button className="rounded-lg px-2 py-1 text-xs underline hover:text-white" onClick={onLogout}>Sign out</button>
+          <span className="flex flex-col items-end text-xs">
+            <button className="underline hover:text-white" onClick={onLogout}>Sign out</button>
+            <a className="underline hover:text-white" href="#/password">Password</a>
+          </span>
         </div>
       </aside>
 
@@ -126,6 +129,7 @@ function More() {
       {TABS.filter((t) => t.more && (!t.admin || user.role === 'admin')).map((t) => (
         <a key={t.id} href={t.href} className="card flex items-center gap-3 font-semibold hover:border-accent"><Icon name={t.icon} />{t.label}<Icon name="chevron" className="ml-auto h-4 w-4" /></a>
       ))}
+      <a href="#/password" className="card flex items-center gap-3 font-semibold hover:border-accent"><Icon name="sliders" />Change my password<Icon name="chevron" className="ml-auto h-4 w-4" /></a>
       <p className="pt-2 text-sm text-muted">Signed in as {user.name} ({user.role}).</p>
     </div>
   );
@@ -148,8 +152,10 @@ function Page({ parts, query }) {
   if (section === 'pending') return <PendingQty />;
   if (section === 'ughrani') return <Ughrani />;
   if (section === 'more') return <More />;
-  if (section === 'admin' || section === 'settings') return <Settings />;
+  if (section === 'admin' || section === 'settings') return <Admin />;
+  if (section === 'password') return <Password />;
   if (section === 'customers') {
+    if (a && parts[2] === 'settle') return <SettleForm key={a} id={a} />;
     if (a) return <CustomerDetail key={a} id={a} />;
     return <Customers key={query.pending || 'all'} pendingOnly={Boolean(query.pending)} />;
   }
@@ -177,6 +183,7 @@ export default function App() {
   const ctx = useMemo(() => meta && {
     user, ...meta, reloadMeta: loadMeta,
     names: Object.fromEntries(meta.products.map((p) => [p.key, p.name])),
+    selling: meta.products.filter((p) => p.active !== false).map((p) => p.key),
     prices: {
       regular: Object.fromEntries(meta.products.map((p) => [p.key, p.price])),
       party: Object.fromEntries(meta.products.map((p) => [p.key, p.partyPrice || 0])),
@@ -192,7 +199,7 @@ export default function App() {
   const active = section === 'settings' ? 'admin' : section;
   return (
     <AppCtx.Provider value={ctx}>
-      <Shell user={user} onLogout={logout} active={active} routeKey={window.location.hash} showFab={!route.parts[1]}>
+      <Shell user={user} onLogout={logout} active={active} routeKey={window.location.hash} showFab={!route.parts[1] && !['admin', 'settings', 'password', 'more'].includes(section)}>
         <Page {...route} />
       </Shell>
     </AppCtx.Provider>

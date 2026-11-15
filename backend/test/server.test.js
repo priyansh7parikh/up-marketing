@@ -231,6 +231,20 @@ test('server', async (t) => {
     assert.equal((await call('POST', '/api/orders', { ...body, kind: 'vip' }, boss)).status, 400);
   });
 
+  await t.test('a switched-off item cannot be given out, but old orders with it still save', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const shop = (await call('POST', '/api/customers', { name: 'Corner Shop', phone: '9000000004' }, boss)).json;
+    const old = (await call('POST', '/api/orders', { date: '2026-01-11', customer: shop._id, qty: { big_bottle: 2 } }, boss)).json;
+    assert.equal((await call('PUT', '/api/products/big_bottle', { active: false }, boss)).json.active, false);
+
+    const fresh = await call('POST', '/api/orders', { date: '2026-01-12', customer: shop._id, qty: { big_bottle: 1 } }, boss);
+    assert.equal(fresh.status, 400);
+    assert.match(fresh.json.error, /switched off/);
+    assert.equal((await call('PUT', `/api/orders/${old._id}`, { qty: { big_bottle: 2 }, deliveryCharge: 10 }, boss)).status, 200); // unchanged count is fine
+    assert.equal((await call('PUT', `/api/orders/${old._id}`, { qty: { big_bottle: 3 } }, boss)).status, 400);
+    await call('PUT', '/api/products/big_bottle', { active: true }, boss);
+  });
+
   await t.test('pheras: teams, start and close a round, sold = out − back', async () => {
     const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
     const meena = (await call('POST', '/api/auth/login', { username: 'meena', password: 'meena-pass-1' })).cookie;
@@ -314,5 +328,59 @@ test('server', async (t) => {
     assert.deepEqual(left.map((c) => c.name), ['Udit']);
     assert.equal(await Order.countDocuments({ customer: keepId }), 3); // nothing lost
     await assert.rejects(() => col.insertOne({ name: 'Dup', phone: '9409223430' }), /E11000/); // index is back
+  });
+
+  await t.test('admin: staff users, password change, settle, edit history', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const meena = (await call('POST', '/api/auth/login', { username: 'meena', password: 'meena-pass-1' })).cookie;
+
+    // Staff users: admin only, no password hashes leave the server.
+    assert.equal((await call('GET', '/api/users', null, meena)).status, 403);
+    assert.equal((await call('POST', '/api/users', { username: 'kiran', name: 'Kiran', role: 'employee', password: 'short' }, boss)).status, 400);
+    assert.equal((await call('POST', '/api/users', { username: 'ki ran!', name: 'Kiran', role: 'employee', password: 'kiran-pass-1' }, boss)).status, 400);
+    const kiran = await call('POST', '/api/users', { username: 'Kiran', name: 'Kiran', role: 'employee', password: 'kiran-pass-1' }, boss);
+    assert.equal(kiran.status, 201);
+    assert.equal(kiran.json.passwordHash, undefined);
+    assert.equal((await call('POST', '/api/users', { username: 'kiran', name: 'Dup', role: 'employee', password: 'kiran-pass-2' }, boss)).status, 409);
+    assert.ok((await call('GET', '/api/users', null, boss)).json.every((u) => !u.passwordHash));
+
+    // Kiran changes her own password; the old one stops working.
+    const kc = (await call('POST', '/api/auth/login', { username: 'kiran', password: 'kiran-pass-1' })).cookie;
+    assert.equal((await call('POST', '/api/auth/password', { current: 'wrong', next: 'kiran-new-pass' }, kc)).status, 400);
+    assert.equal((await call('POST', '/api/auth/password', { current: 'kiran-pass-1', next: 'kiran-new-pass' }, kc)).status, 200);
+    assert.equal((await call('POST', '/api/auth/login', { username: 'kiran', password: 'kiran-pass-1' })).status, 401);
+
+    // Admin resets it and disables her; she is logged out at once.
+    assert.equal((await call('PUT', `/api/users/${kiran.json._id}`, { password: 'reset-pass-99', active: false }, boss)).json.active, false);
+    assert.equal((await call('GET', '/api/customers', null, kc)).status, 401);
+
+    // The only admin cannot lock themselves out.
+    assert.equal((await call('PUT', `/api/users/${admin._id}`, { active: false }, boss)).status, 400);
+    assert.equal((await call('PUT', `/api/users/${admin._id}`, { role: 'employee' }, boss)).status, 400);
+
+    // Settle: write off money and mark items lost, as a ledger line.
+    const c = (await call('POST', '/api/customers', { name: 'Old Due', phone: '9000000077' }, meena)).json;
+    const o = (await call('POST', '/api/orders', { date: '2026-01-10', customer: c._id, qty: { big_jar: 2 } }, meena)).json; // 2 × 50
+    await call('PUT', `/api/orders/${o._id}`, { deliveryCharge: 20 }, meena); // an employee edit, for the history
+    assert.equal((await call('POST', '/api/settlements', { customer: c._id, amount: 120, reason: 'x' }, meena)).status, 403);
+    assert.equal((await call('POST', '/api/settlements', { customer: c._id, reason: 'nothing entered' }, boss)).status, 400);
+    assert.equal((await call('POST', '/api/settlements', { customer: c._id, amount: 120, lost: { big_jar: 2 } }, boss)).status, 400); // reason required
+    assert.equal((await call('POST', '/api/settlements', { customer: c._id, amount: 120, lost: { big_jar: 2 }, reason: 'Shop closed' }, boss)).status, 201);
+    const after = (await call('GET', `/api/customers/${c._id}`, null, boss)).json;
+    assert.equal(after.owed, 0);
+    assert.deepEqual(after.held, {});
+    assert.equal(after.statement[0].kind, 'settlement');
+    assert.equal(after.statement[0].note, 'Shop closed');
+
+    // Edit history: admin only; names what changed, who did it; employee filter; no secrets.
+    assert.equal((await call('GET', '/api/audit', null, meena)).status, 403);
+    const log = (await call('GET', '/api/audit', null, boss)).json;
+    const edit = log.find((l) => l.what === 'Order' && l.action === 'update' && l.about.includes('Old Due'));
+    assert.equal(edit.byName, 'Meena');
+    assert.deepEqual(edit.changes.deliveryCharge, { from: 0, to: 20 });
+    assert.ok(log.some((l) => l.what === 'Staff user' && l.changes?.password?.to === 'reset'));
+    assert.ok(!JSON.stringify(log).includes('$2b$')); // no bcrypt hashes anywhere
+    const onlyStaff = (await call('GET', '/api/audit?role=employee', null, boss)).json;
+    assert.ok(onlyStaff.length > 0 && onlyStaff.every((l) => l.role === 'employee'));
   });
 });

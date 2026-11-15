@@ -61,6 +61,9 @@ export function Pheras() {
       <div className="grid gap-4 lg:grid-cols-2">
         {teams.map((t) => {
           const sold = addUp(t.rounds, (p) => p.sold);
+          // Rounds in time order, numbered per day: a team does 2–4 rounds a day on different routes.
+          const rounds = [...t.rounds].sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`))
+            .map((p, i, all) => ({ ...p, n: all.slice(0, i).filter((x) => x.date === p.date).length + 1 }));
           const time = t.rounds.reduce((n, p) => n + minutes(p), 0);
           return (
             <section key={t.id} className="card space-y-3 p-0">
@@ -72,10 +75,10 @@ export function Pheras() {
                 <span className="chip chip-accent">sold {vesselText(sold, names) || 'nothing yet'}</span>
               </div>
               <div>
-                {t.rounds.map((p) => (
+                {rounds.map((p) => (
                   <a key={p._id} href={`#/pheras/${p._id}`} className="block space-y-1 border-t border-line px-5 py-3 hover:bg-bg/60">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-semibold">{from !== to && `${fmtDay(p.date)} · `}{p.startTime} – {p.endTime || '…'}</span>
+                      <span><span className="font-semibold">{from !== to && `${fmtDay(p.date)} · `}Round {p.n}</span> <span className="text-sm text-muted">{p.startTime} – {p.endTime || '…'}</span></span>
                       {p.endTime ? <span className="text-xs text-muted">{duration(minutes(p))}</span> : <span className="chip chip-warn">out now · tap to close</span>}
                     </div>
                     <table className="w-full text-sm">
@@ -186,7 +189,7 @@ export function PheraForm({ id }) {
 
       <fieldset className="card space-y-2">
         <legend className="label px-1">Filled, going out</legend>
-        <div className="grid gap-2 sm:grid-cols-2">{PRODUCTS.map((p) => <Stepper key={p} label={app.names[p]} value={form.filledOut[p]} onChange={setQty('filledOut', p)} />)}</div>
+        <div className="grid gap-2 sm:grid-cols-2">{PRODUCTS.filter((p) => app.selling.includes(p) || existing.data?.filledOut?.[p]).map((p) => <Stepper key={p} label={app.names[p]} value={form.filledOut[p]} onChange={setQty('filledOut', p)} />)}</div>
       </fieldset>
 
       <div className="grid gap-4 sm:grid-cols-2">

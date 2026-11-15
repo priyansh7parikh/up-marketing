@@ -27,7 +27,7 @@ const MOBILE = /^[6-9]\d{9}$/; // Indian mobiles start 6-9; this also rejects 10
 const audited = (schema) => { schema.plugin(auditPlugin); return schema; };
 
 const User = mongoose.model('User', new mongoose.Schema({
-  username: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  username: { type: String, required: true, unique: true, lowercase: true, trim: true, match: [/^[a-z0-9._-]+$/, 'Sign-in name can only have letters, numbers, dot, dash or underscore'] },
   name: { type: String, required: true, trim: true },
   passwordHash: { type: String, required: true },
   role: { type: String, enum: ['admin', 'employee'], required: true },
@@ -49,6 +49,7 @@ const Product = mongoose.model('Product', audited(new mongoose.Schema({
   nameGu: String,
   price: { ...money, required: true }, // regular customers
   partyPrice: money, // party orders
+  active: { type: Boolean, default: true }, // switched off = no longer given out on new orders or pheras
 })));
 
 const Order = mongoose.model('Order', audited(new mongoose.Schema({

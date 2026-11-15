@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api } from './api.js';
-import { BUSINESS, DueChip, Field, Status, fmtDay, go, rupees, telHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
+import { BUSINESS, DueChip, Field, PRODUCTS, Status, Stepper, fmtDay, go, rupees, telHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
 
 function Balance({ s, names }) {
   const vessels = vesselText(s.held, names);
@@ -148,6 +148,7 @@ export function CustomerDetail({ id }) {
           {c.phone && <a className="btn" href={telHref(c.phone)}>Call</a>}
           {c.phone && <a className="btn" href={waHref(c.phone, reminder)} target="_blank" rel="noreferrer">WhatsApp</a>}
           <button className="btn" onClick={() => setEditing(true)}>Edit</button>
+          {user.role === 'admin' && (vessels || c.owed > 0) && <a className="btn" href={`#/customers/${id}/settle`}>Settle</a>}
           {user.role === 'admin' && <button className="btn btn-danger" onClick={remove}>Delete</button>}
         </div>
         {error && <p role="alert" className="text-bad">{error}</p>}
@@ -182,5 +183,64 @@ export function CustomerDetail({ id }) {
         })}
       </div>
     </div>
+  );
+}
+
+// Admin only: close what will never come back. It is added to the ledger as its own line; the orders are not edited.
+export function SettleForm({ id }) {
+  const { names, user } = useApp();
+  const { data: c, ...status } = useLoad(() => api('GET', `/customers/${id}`), [id]);
+  const [form, setForm] = useState(null);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  if (user.role !== 'admin') return <p className="card text-muted">Admins only.</p>;
+  if (!c) return <Status {...status} />;
+  const f = form || { amount: c.owed || '', lost: Object.fromEntries(PRODUCTS.map((p) => [p, 0])), reason: '' };
+  const lostText = vesselText(f.lost, names);
+  const amount = Number(f.amount || 0);
+  const nothing = !(amount > 0) && !lostText;
+
+  const save = async () => {
+    setBusy(true);
+    setError('');
+    try { await api('POST', '/settlements', { customer: id, amount, lost: f.lost, reason: f.reason.trim() }); go(`/customers/${id}`); } catch (e) { setError(e.message); setBusy(false); setConfirming(false); }
+  };
+
+  return (
+    <form className="max-w-2xl space-y-4" onSubmit={(e) => { e.preventDefault(); if (nothing) setError('Enter an amount to write off or items to mark as lost.'); else { setError(''); setConfirming(true); } }}>
+      <a href={`#/customers/${id}`} className="text-sm font-medium text-muted hover:text-accent">← {c.name}</a>
+      <h1 className="h1">Settle {c.name}</h1>
+      <p className="text-muted">Use this for a discount, or for money and items you will not get back. It is recorded in the ledger and the edit history.</p>
+      <div className="card flex flex-wrap gap-1.5">
+        {vesselText(c.held, names) ? <span className="chip chip-accent">holding {vesselText(c.held, names)}</span> : <span className="chip chip-ok">holding nothing</span>}
+        {c.owed > 0 ? <span className="chip chip-bad">{rupees(c.owed)} pending</span> : <span className="chip chip-ok">no money due</span>}
+      </div>
+      <div className="card space-y-4">
+        <Field label={`Money to write off (₹), of ${rupees(c.owed || 0)} due`}>
+          <input className="input" inputMode="decimal" value={f.amount} placeholder="0" onChange={(e) => setForm({ ...f, amount: e.target.value })} />
+        </Field>
+        <fieldset className="space-y-2">
+          <legend className="label">Items to mark as lost (will not come back)</legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {PRODUCTS.map((p) => <Stepper key={p} label={`${names[p]} · holding ${c.held?.[p] || 0}`} value={f.lost[p]} onChange={(n) => setForm({ ...f, lost: { ...f.lost, [p]: Math.min(n, c.held?.[p] || 0) } })} />)}
+          </div>
+        </fieldset>
+        <Field label="Reason (required)"><input className="input" required value={f.reason} placeholder="For example: discount agreed, shop closed" onChange={(e) => setForm({ ...f, reason: e.target.value })} /></Field>
+      </div>
+      {error && <p role="alert" className="text-bad">{error}</p>}
+      {!confirming && <div className="flex gap-3"><button className="btn btn-primary">Settle…</button><a className="btn" href={`#/customers/${id}`}>Cancel</a></div>}
+      {confirming && (
+        <div role="alertdialog" aria-label="Confirm settlement" className="card space-y-3 border-warn bg-warn-soft">
+          <p className="font-bold">Confirm: {[amount > 0 && `write off ${rupees(amount)}`, lostText && `mark ${lostText} as lost`].filter(Boolean).join(' and ')} for {c.name}?</p>
+          <p className="text-sm">Reason: {f.reason}</p>
+          <div className="flex gap-3">
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Confirm'}</button>
+            <button type="button" className="btn" onClick={() => setConfirming(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </form>
   );
 }

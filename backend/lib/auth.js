@@ -41,6 +41,22 @@ router.post('/login', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Anyone can change their own password, by proving the current one.
+router.post('/password', async (req, res, next) => {
+  try {
+    const s = req.session.user;
+    if (!s) return res.status(401).json({ error: 'Not logged in' });
+    const { current, next: fresh } = req.body || {};
+    const user = await User.findById(s.id);
+    if (!user?.active || typeof current !== 'string' || !(await bcrypt.compare(current, user.passwordHash))) {
+      return res.status(400).json({ error: 'Current password is wrong' });
+    }
+    user.passwordHash = await hashPassword(fresh);
+    await user.save();
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 router.post('/logout', (req, res, next) => req.session.destroy((err) => (err ? next(err) : res.json({ ok: true }))));
 
 router.get('/me', (req, res) => (req.session.user ? res.json(req.session.user) : res.status(401).json({ error: 'Not logged in' })));

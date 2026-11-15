@@ -304,7 +304,7 @@ export function OrderForm({ id, presetCustomer }) {
       <div className="grid gap-4 sm:grid-cols-2">
         <fieldset className="card space-y-2">
           <legend className="label px-1">Given (filled)</legend>
-          {PRODUCTS.map((p) => <Stepper key={p} label={`${app.names[p]} · ${rupees(prices[p])}`} value={form.qty[p]} onChange={setQty('qty', p)} />)}
+          {PRODUCTS.filter((p) => app.selling.includes(p) || existing.data?.qty?.[p]).map((p) => <Stepper key={p} label={`${app.names[p]} · ${rupees(prices[p])}`} value={form.qty[p]} onChange={setQty('qty', p)} />)}
         </fieldset>
         <fieldset className="card space-y-2">
           <legend className="label px-1">Empties taken back now</legend>
