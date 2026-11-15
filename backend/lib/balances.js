@@ -42,6 +42,18 @@ function toLines({ orders = [], collections = [], settlements = [] }) {
   return lines;
 }
 
+// Oldest open lot in a set → since when it has been out, when it was due, and how late it is.
+function age(open, today) {
+  const min = (key) => open.reduce((m, l) => (!m || l[key] < m ? l[key] : m), null);
+  const [since, due] = [min('date'), min('due')];
+  return {
+    since, due,
+    daysOld: since ? daysBetween(since, today) : 0,
+    daysLate: due && due < today ? daysBetween(due, today) : 0,
+    pending: Boolean(since && since < today),
+  };
+}
+
 // One customer's lines → what they still hold/owe and since when (as of `today`, YYYY-MM-DD).
 function summarize(lines, today) {
   // Same day: deliveries before returns, so empties handed back at the door clear older lots first.
@@ -83,6 +95,9 @@ function summarize(lines, today) {
     daysOld: oldestDate ? daysBetween(oldestDate, today) : 0,
     due, // earliest due date still open: === today → "due today", < today → late
     daysLate: due && due < today ? daysBetween(due, today) : 0,
+    // Items and money aged on their own: someone can be late on jars but fully paid, or the other way round.
+    qty: age(PRODUCTS.flatMap((p) => lots[p] || []), today),
+    money: age(lots.money || [], today),
     pending: remaining.some((l) => l.date < today), // not cleared from a previous day
     overdue: remaining.some((l) => l.due < today), // past its return/payment due date
   };
@@ -127,7 +142,7 @@ function statement({ orders = [], collections = [], settlements = [] }) {
     for (const [p, n] of Object.entries(v)) held[p] = Math.max(0, held[p] + n); // extra returns aren't ours
     net += paise(billed) - paise(paid);
     return {
-      kind, id: doc._id, date: day(doc.date), vessels: v, billed, paid, method: doc.method, note: doc.reason,
+      kind, id: doc._id, date: day(doc.date), vessels: v, billed, paid, method: doc.method, note: doc.reason || doc.address,
       by: doc.createdBy, editedBy: doc.updatedBy,
       held: Object.fromEntries(Object.entries(held).filter(([, n]) => n)), balance: net / 100,
     };

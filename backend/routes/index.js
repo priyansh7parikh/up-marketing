@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const { requireRole } = require('../lib/auth');
 const { asUser } = require('../lib/audit');
 const { PRODUCTS, day, summarizeAll, statement } = require('../lib/balances');
-const { Customer, Product, Order, Collection, Settlement, Settings, User, Team, Phera } = require('../models');
+const { normalizePhone, MOBILE, Customer, Product, Order, Collection, Settlement, Settings, User, Team, Phera } = require('../models');
 
 const api = express.Router();
 const admin = requireRole('admin');
@@ -16,14 +16,45 @@ const who = 'name';
 
 // ---- products ----
 const DEFAULT_PRODUCTS = [
-  { key: 'small_jar', name: 'Small jar', nameGu: 'નાનો જગ' },
-  { key: 'big_jar', name: 'Big jar', nameGu: 'મોટો જગ' },
-  { key: 'small_bottle', name: 'Small bottle', nameGu: 'નાની બોટલ' },
-  { key: 'big_bottle', name: 'Big bottle', nameGu: 'મોટી બોટલ' },
+  { key: 'small_jar', name: '10L Jar', nameGu: '૧૦ લિ. જગ', was: 'Small jar' },
+  { key: 'big_jar', name: '20L Jar', nameGu: '૨૦ લિ. જગ', was: 'Big jar' },
+  { key: 'small_bottle', name: '10L Bottle', nameGu: '૧૦ લિ. બોટલ', was: 'Small bottle' },
+  { key: 'big_bottle', name: '20L Bottle', nameGu: '૨૦ લિ. બોટલ', was: 'Big bottle' },
 ];
 async function seedProducts() {
-  const have = new Set((await Product.find({}, 'key').lean()).map((p) => p.key));
-  await asUser(null, () => Promise.all(DEFAULT_PRODUCTS.filter((p) => !have.has(p.key)).map((p) => Product.create({ ...p, price: 0 }))));
+  const have = new Map((await Product.find()).map((p) => [p.key, p]));
+  await asUser(null, async () => {
+    for (const { was, ...p } of DEFAULT_PRODUCTS) {
+      const old = have.get(p.key);
+      if (!old) await Product.create({ ...p, price: 0 });
+      // One-time rename from the first names; a name an admin has changed is left alone.
+      else if (old.name === was) { old.set({ name: p.name, nameGu: p.nameGu }); await old.save(); }
+    }
+  });
+}
+
+// One-time repair for data from before phone numbers were the identity: customers sharing a number become one
+// account (the one with the most entries keeps its name), then the unique index can be built.
+async function fixCustomerPhones() {
+  const groups = new Map();
+  for (const c of await Customer.find().sort('createdAt')) {
+    const key = normalizePhone(c.phone);
+    if (key) groups.set(key, [...(groups.get(key) || []), c]);
+  }
+  const ledgers = [Order, Collection, Settlement];
+  await asUser(null, async () => {
+    for (const [phone, list] of groups) {
+      if (list.length < 2) continue;
+      const counts = await Promise.all(list.map(async (c) => (await Promise.all(ledgers.map((M) => M.countDocuments({ customer: c._id })))).reduce((a, b) => a + b, 0)));
+      const keep = list[counts.indexOf(Math.max(...counts))];
+      for (const other of list.filter((c) => c !== keep)) {
+        for (const M of ledgers) for (const doc of await M.find({ customer: other._id })) { doc.customer = keep._id; await doc.save(); }
+        await other.deleteOne();
+        console.log(`Customers: merged "${other.name}" into "${keep.name}" (same number ${phone})`);
+      }
+    }
+  });
+  await Customer.syncIndexes();
 }
 
 api.get('/products', h(async (req, res) => {
@@ -73,7 +104,8 @@ async function ledgerDocs(filter = {}) {
 api.get('/customers', h(async (req, res) => {
   const [customers, docs] = await Promise.all([Customer.find().sort('name').lean(), ledgerDocs()]);
   const sums = summarizeAll(docs, today());
-  const empty = { held: {}, owed: 0, credit: 0, pending: false, overdue: false };
+  const none = { since: null, due: null, daysOld: 0, daysLate: 0, pending: false };
+  const empty = { held: {}, owed: 0, credit: 0, pending: false, overdue: false, qty: none, money: none };
   res.json(customers.map((c) => ({ ...c, ...(sums.get(String(c._id)) || empty) })));
 }));
 
@@ -85,14 +117,24 @@ api.get('/customers/:id', h(async (req, res) => {
   res.json({ ...c, ...sums, statement: statement(docs).reverse() }); // newest first
 }));
 
+// Find-or-create by phone: the number is the identity, so a known number always returns the existing account
+// (whatever name was typed) and orders collate under it.
 api.post('/customers', h(async (req, res) => {
+  const phone = normalizePhone(req.body?.phone);
+  const found = MOBILE.test(phone) && await Customer.findOne({ phone });
+  if (found) return res.json(found);
   res.status(201).json(await Customer.create(pick(req.body, CUSTOMER_FIELDS)));
 }));
 
 api.put('/customers/:id', h(async (req, res) => {
   const c = await Customer.findById(req.params.id);
   if (!c) return notFound(res);
-  c.set(pick(req.body, CUSTOMER_FIELDS));
+  const body = pick(req.body, CUSTOMER_FIELDS);
+  // The number is the account, so only an admin may change it.
+  if (body.phone !== undefined && normalizePhone(body.phone) !== c.phone && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Only an admin can change a phone number' });
+  }
+  c.set(body);
   res.json(await c.save());
 }));
 
@@ -117,7 +159,7 @@ function dateFilter({ from, to, customer }) {
 }
 
 // ---- orders ----
-const ORDER_FIELDS = ['date', 'customer', 'kind', 'qty', 'emptiesBack', 'deliveryType', 'deliveryCharge', 'paidAmount', 'method', 'dueDate'];
+const ORDER_FIELDS = ['date', 'customer', 'kind', 'address', 'qty', 'emptiesBack', 'deliveryType', 'deliveryCharge', 'paidAmount', 'method', 'dueDate'];
 
 async function priceOrder(order) {
   // Prices are fixed when the order is made; switching it between regular and party re-reads that price list.
@@ -137,7 +179,13 @@ async function saveOrder(order, body) {
     throw Object.assign(new Error('Unknown customer'), { status: 400 });
   }
   await priceOrder(order);
-  return order.save();
+  await order.save();
+  // Keep the latest address on the customer too, for reference.
+  if (order.address) {
+    const c = await Customer.findById(order.customer);
+    if (c && c.address !== order.address) { c.address = order.address; await c.save(); }
+  }
+  return order;
 }
 
 api.get('/orders', h(async (req, res) => {
@@ -177,7 +225,7 @@ async function saveCollection(c, body, user) {
   if (c.isModified('customer') && !(await Customer.exists({ _id: c.customer }))) throw Object.assign(new Error('Unknown customer'), { status: 400 });
   if (c.isModified('collectedBy') && !(await User.exists({ _id: c.collectedBy, active: true }))) throw Object.assign(new Error('Unknown staff member'), { status: 400 });
   const anything = PRODUCTS.some((p) => c.returned?.[p]) || c.amount > 0;
-  if (!anything) throw Object.assign(new Error('Enter vessels returned or money received'), { status: 400 });
+  if (!anything) throw Object.assign(new Error('Enter the items returned or money received'), { status: 400 });
   return c.save();
 }
 
@@ -258,4 +306,4 @@ api.delete('/pheras/:id', admin, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-module.exports = { api, seedProducts };
+module.exports = { api, seedProducts, fixCustomerPhones };

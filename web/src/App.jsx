@@ -3,7 +3,8 @@ import { api } from './api.js';
 import { AppCtx, Field, Icon, Status, go, initials, useApp, useLoad, useRoute } from './ui.jsx';
 import { CustomerDetail, Customers } from './Customers.jsx';
 import { OrderForm, Orders } from './Orders.jsx';
-import Overview from './Overview.jsx';
+import Today from './Today.jsx';
+import { PendingQty, Ughrani } from './Pending.jsx';
 import { PheraForm, Pheras } from './Pheras.jsx';
 import { ReturnForm, Returns } from './Returns.jsx';
 import Settings from './Settings.jsx';
@@ -11,7 +12,7 @@ import Settings from './Settings.jsx';
 function Logo() {
   return (
     <span className="flex items-center gap-3">
-      <span aria-hidden="true" className="flex h-9 w-9 items-center justify-center rounded-xl bg-lime font-display text-sm font-extrabold text-side">UP</span>
+      <span aria-hidden="true" className="flex h-9 w-9 -rotate-45 items-center justify-center rounded-[50%_50%_50%_0] bg-white"><span className="rotate-45 font-display text-xs font-extrabold text-accent">UP</span></span>
       <span className="font-display text-lg font-bold tracking-tight">UP MARKETING</span>
     </span>
   );
@@ -28,7 +29,7 @@ function Login({ onLogin }) {
     try { onLogin(await api('POST', '/auth/login', form)); } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
   return (
-    <main className="flex min-h-full items-center justify-center bg-side p-4">
+    <main className="side-grad flex min-h-full items-center justify-center p-4">
       <form onSubmit={submit} className="card w-full max-w-sm space-y-4">
         <Logo />
         <p className="text-sm text-muted">Sign in to track orders, returns and payments.</p>
@@ -46,34 +47,37 @@ function Login({ onLogin }) {
 }
 
 const TABS = [
-  { id: 'overview', href: '#/', label: 'Overview', icon: 'box' },
-  { id: 'orders', href: '#/orders', label: 'Orders', long: 'All orders', icon: 'clipboard' },
+  { id: 'today', href: '#/', label: 'Today', icon: 'home' },
+  { id: 'orders', href: '#/orders', label: 'Orders', icon: 'clipboard' },
   { id: 'returns', href: '#/returns', label: 'Returns', icon: 'rotate' },
   { id: 'pheras', href: '#/pheras', label: 'Pheras', icon: 'truck' },
-  { id: 'pending', href: '#/customers?pending=1', label: 'Pending', long: 'Pending report', icon: 'alert', more: true },
+  { id: 'pending', href: '#/pending', label: 'Pending items', icon: 'alert', more: true },
+  { id: 'ughrani', href: '#/ughrani', label: 'Ughrani', long: 'Ughrani (dues)', icon: 'rupee', more: true },
   { id: 'customers', href: '#/customers', label: 'Customers', icon: 'users', more: true },
-  { id: 'settings', href: '#/settings', label: 'Settings', icon: 'sliders', admin: true, more: true },
+  { id: 'admin', href: '#/admin', label: 'Admin', icon: 'sliders', admin: true, more: true },
 ];
 
-function Shell({ user, onLogout, active, routeKey, children }) {
+function Shell({ user, onLogout, active, routeKey, showFab, children }) {
   const tabs = TABS.filter((t) => !t.admin || user.role === 'admin');
   // Refetched on every navigation so the badge follows new orders and returns.
   const customers = useLoad(() => api('GET', '/customers'), [routeKey]);
-  const overdue = (customers.data || []).filter((c) => c.overdue).length;
-  const badge = (t) => t.id === 'pending' && overdue > 0 && (
-    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-bad px-1 text-xs font-bold text-white" aria-label={`${overdue} overdue`}>{overdue}</span>
+  const overdue = (customers.data || []).filter((c) => c.qty?.daysLate > 0).length;
+  const dues = (customers.data || []).filter((c) => c.owed > 0).length;
+  const counts = { pending: [overdue, 'late'], ughrani: [dues, 'to collect from'] };
+  const badge = (t) => counts[t.id]?.[0] > 0 && (
+    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-bad px-1 text-xs font-bold text-white" aria-label={`${counts[t.id][0]} ${counts[t.id][1]}`}>{counts[t.id][0]}</span>
   );
 
   return (
     <div className="flex min-h-full flex-col lg:flex-row">
       {/* Laptop: sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col bg-side p-5 text-side-fg lg:flex">
+      <aside className="side-grad hidden w-64 shrink-0 flex-col p-5 text-side-fg lg:flex">
         <div className="mb-8 text-white"><Logo /></div>
-        <div className="mb-2 px-3 text-xs font-semibold tracking-widest text-side-fg/60 uppercase">Workspace</div>
+        <div className="mb-2 px-3 text-xs font-semibold tracking-widest text-side-fg/70 uppercase">Workspace</div>
         <nav className="flex flex-col gap-1">
           {tabs.map((t) => (
             <a key={t.id} href={t.href} aria-current={active === t.id ? 'page' : undefined}
-              className={`flex items-center gap-3 rounded-[9px] px-3 py-2.5 text-sm ${active === t.id ? 'bg-lime font-semibold text-side' : 'hover:bg-white/5 hover:text-white'}`}>
+              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${active === t.id ? 'bg-white font-bold text-accent shadow-sm' : 'font-medium hover:bg-white/10 hover:text-white'}`}>
               <Icon name={t.icon} />{t.long || t.label}{badge(t)}
             </a>
           ))}
@@ -89,12 +93,15 @@ function Shell({ user, onLogout, active, routeKey, children }) {
       </aside>
 
       {/* Phone: top bar */}
-      <header className="flex items-center justify-between bg-side px-4 py-3 text-white lg:hidden">
+      <header className="side-grad flex items-center justify-between px-4 py-3 text-white lg:hidden">
         <Logo />
         <button className="text-xs text-side-fg underline" onClick={onLogout}>Sign out</button>
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 p-4 pb-24 sm:p-6 sm:pb-24 lg:p-10 lg:pb-10">{children}</main>
+
+      {/* Phone: the most common action is always one tap away */}
+      {showFab && <a href="#/orders/new" className="btn btn-primary fixed right-4 bottom-20 z-10 rounded-full px-5 shadow-lg lg:hidden"><Icon name="plus" className="h-4 w-4" /> New order</a>}
 
       {/* Phone: bottom tabs */}
       <nav className="fixed inset-x-0 bottom-0 flex border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] lg:hidden">
@@ -102,7 +109,7 @@ function Shell({ user, onLogout, active, routeKey, children }) {
           <a key={t.id} href={t.href} aria-current={active === t.id || (t.id === 'more' && tabs.some((x) => x.more && x.id === active)) ? 'page' : undefined}
             className={`relative flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-semibold ${active === t.id || (t.id === 'more' && tabs.some((x) => x.more && x.id === active)) ? 'border-t-2 border-accent text-accent' : 'text-muted'}`}>
             <Icon name={t.icon} />{t.label}
-            {t.id === 'more' && overdue > 0 && <span className="absolute top-1.5 left-1/2 ml-2 h-2 w-2 rounded-full bg-bad" />}
+            {t.id === 'more' && overdue + dues > 0 && <span className="absolute top-1.5 left-1/2 ml-2 h-2 w-2 rounded-full bg-bad" />}
           </a>
         ))}
       </nav>
@@ -138,13 +145,15 @@ function Page({ parts, query }) {
     if (a) return <PheraForm key={a} id={a === 'new' ? null : a} />;
     return <Pheras />;
   }
+  if (section === 'pending') return <PendingQty />;
+  if (section === 'ughrani') return <Ughrani />;
   if (section === 'more') return <More />;
-  if (section === 'settings') return <Settings />;
+  if (section === 'admin' || section === 'settings') return <Settings />;
   if (section === 'customers') {
     if (a) return <CustomerDetail key={a} id={a} />;
     return <Customers key={query.pending || 'all'} pendingOnly={Boolean(query.pending)} />;
   }
-  return <Overview />;
+  return <Today />;
 }
 
 export default function App() {
@@ -179,11 +188,11 @@ export default function App() {
   if (!ctx) return <div className="p-4"><Status loading /></div>;
 
   const logout = () => api('POST', '/auth/logout').finally(() => { setUser(null); go('/'); });
-  const section = route.parts[0] || 'overview';
-  const active = section === 'customers' && route.query.pending && !route.parts[1] ? 'pending' : section;
+  const section = route.parts[0] || 'today';
+  const active = section === 'settings' ? 'admin' : section;
   return (
     <AppCtx.Provider value={ctx}>
-      <Shell user={user} onLogout={logout} active={active} routeKey={window.location.hash}>
+      <Shell user={user} onLogout={logout} active={active} routeKey={window.location.hash} showFab={!route.parts[1]}>
         <Page {...route} />
       </Shell>
     </AppCtx.Provider>

@@ -137,3 +137,17 @@ test('day() uses India time for Date objects', () => {
   assert.equal(day(new Date('2026-11-15T20:00:00Z')), '2026-11-16'); // 01:30 IST next day
   assert.equal(day('2026-11-15T23:59:00Z'), '2026-11-15');
 });
+
+test('quantity and money are aged separately', () => {
+  const r = sum({
+    orders: [
+      { date: '2026-11-10', qty: { big_jar: 2 }, total: 80, paidAmount: 80 }, // paid, jars still out
+      { date: '2026-11-14', qty: { small_jar: 1 }, emptiesBack: { small_jar: 1 }, total: 25 }, // jar back, money due
+    ],
+  }, '2026-11-16');
+  assert.deepEqual([r.qty.since, r.qty.daysLate, r.qty.pending], ['2026-11-10', 5, true]);
+  assert.deepEqual([r.money.since, r.money.daysLate, r.money.pending], ['2026-11-14', 1, true]);
+
+  const clear = sum({ orders: [{ date: '2026-11-10', qty: { big_jar: 1 }, emptiesBack: { big_jar: 1 }, total: 40, paidAmount: 40 }] }, '2026-11-16');
+  assert.deepEqual([clear.qty.since, clear.qty.pending, clear.money.since, clear.money.pending], [null, false, null, false]);
+});

@@ -61,7 +61,7 @@ export default function Settings() {
   return (
     <div className="max-w-2xl space-y-8">
     <form onSubmit={save} className="space-y-4">
-      <h1 className="h1">Settings</h1>
+      <h1 className="h1">Admin</h1>
       <fieldset className="card space-y-3">
         <legend className="label px-1">Prices (₹ each)</legend>
         <div className="grid grid-cols-[1fr_6.5rem_6.5rem] items-center gap-x-3 gap-y-2 sm:grid-cols-[1fr_9rem_9rem]">
@@ -78,7 +78,7 @@ export default function Settings() {
             </Fragment>
           ))}
         </div>
-        <p className="text-xs text-muted">Each order bills from the Regular or the Party order list, whichever type the order is. Changing a price applies to new orders only. Orders made while a vessel had no price are billed when you first set it.</p>
+        <p className="text-xs text-muted">Each order bills from the Regular or the Party order list, whichever type the order is. Changing a price applies to new orders only. Orders made while an item had no price are billed when you first set it.</p>
       </fieldset>
       <fieldset className="card grid gap-4 sm:grid-cols-2">
         <legend className="label px-1">Payment</legend>

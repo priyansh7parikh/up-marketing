@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
+import { CustomerPicker } from './CustomerPicker.jsx';
 import { UpiScreen } from './Orders.jsx';
-import { Avatar, DueChip, Field, Icon, PRODUCTS, PageHead, SearchBox, Status, Stepper, addDays, fmtDay, go, rupees, today, useApp, useLoad, vesselText } from './ui.jsx';
+import { Avatar, DueChip, Field, Icon, PRODUCTS, PageHead, SearchBox, Status, Stepper, addDays, fmtDay, go, isMobile, normalizePhone, rupees, today, useApp, useLoad, vesselText } from './ui.jsx';
 
 const zero = () => Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
 const total = (list, pick) => list.reduce((n, c) => n + Math.round((pick(c) || 0) * 100), 0) / 100;
@@ -26,7 +27,7 @@ export function Returns() {
 
   return (
     <div className="space-y-6">
-      <PageHead eyebrow="Collection register" title="Returns" sub="Vessels that came back and money collected after delivery."
+      <PageHead eyebrow="Collection register" title="Returns" sub="Jars and bottles that came back, and money collected after delivery."
         action={<a href="#/returns/new" className="btn btn-primary"><Icon name="plus" className="h-4 w-4" /> Record return</a>} />
       <div className="card overflow-hidden p-0">
         <div className="flex flex-wrap items-end justify-between gap-3 p-5">
@@ -58,7 +59,7 @@ export function Returns() {
                 <span className="block truncate text-xs text-muted">{c.customer?.phone || 'no phone'} · {fmtDay(c.date)}</span>
               </span>
             </span>
-            <span className="col-span-2 font-medium lg:col-span-1">{vesselText(c.returned, names) || 'No vessels'}</span>
+            <span className="col-span-2 font-medium lg:col-span-1">{vesselText(c.returned, names) || 'No items'}</span>
             <span>{c.amount > 0 ? <span className="chip chip-ok">{rupees(c.amount)} · {c.method}</span> : <span className="chip">no money</span>}</span>
             <span className="text-right text-xs text-muted lg:text-left">collected by {c.collectedBy?.name || '—'}{c.updatedBy && ` · edited by ${c.updatedBy.name}`}</span>
           </a>
@@ -84,11 +85,11 @@ export function ReturnForm({ id, presetCustomer }) {
     if (existing.loading || !customers.data || form) return;
     const c = existing.data;
     setForm(c ? {
-      date: c.date, customer: c.customer?._id || '', returned: { ...zero(), ...c.returned },
+      date: c.date, customer: c.customer?._id || '', phone: c.customer?.phone || '', returned: { ...zero(), ...c.returned },
       pay: c.amount > 0 ? c.method : 'none', amount: c.amount || '', collectedBy: c.collectedBy?._id || app.user.id,
     } : {
       // The usual case is "everything came back", so start from what they hold.
-      date: today(), customer: presetCustomer || '', returned: held(presetCustomer), pay: 'none', amount: '', collectedBy: app.user.id,
+      date: today(), customer: presetCustomer || '', phone: customers.data.find((x) => x._id === presetCustomer)?.phone || '', returned: held(presetCustomer), pay: 'none', amount: '', collectedBy: app.user.id,
     });
   }, [existing.loading, existing.data, customers.data, form, presetCustomer]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -99,14 +100,16 @@ export function ReturnForm({ id, presetCustomer }) {
   const wasPaid = existing.data?.amount || 0;
   const amount = form.amount === '' ? (who?.owed || 0) : Number(form.amount);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  const pickCustomer = (e) => setForm({ ...form, customer: e.target.value, ...(!id && { returned: held(e.target.value) }) });
-  // People with something pending first: they are who you are most likely recording a return for.
-  const options = [...customers.data].sort((a, b) => Number(b.pending || b.owed > 0) - Number(a.pending || a.owed > 0) || a.name.localeCompare(b.name));
+  const pickPhone = (value) => {
+    const hit = customers.data.find((c) => c.phone === normalizePhone(value));
+    setForm({ ...form, phone: value, customer: hit?._id || '', ...(!id && { returned: held(hit?._id) }) });
+  };
 
   const submit = async (e) => {
     e.preventDefault();
+    if (!who) return setError('Enter the number of an existing customer.');
     const paying = form.pay !== 'none' && amount > 0;
-    if (!PRODUCTS.some((p) => form.returned[p]) && !paying) return setError('Enter vessels returned or money received.');
+    if (!PRODUCTS.some((p) => form.returned[p]) && !paying) return setError('Enter the items returned or money received.');
     setBusy(true);
     setError('');
     try {
@@ -143,7 +146,7 @@ export function ReturnForm({ id, presetCustomer }) {
 
   return (
     <form onSubmit={submit} className="max-w-3xl space-y-4">
-      <PageHead eyebrow="Collection" title={id ? 'Edit return' : 'Record a return'} sub="Vessels that came back and any money collected." />
+      <PageHead eyebrow="Collection" title={id ? 'Edit return' : 'Record a return'} sub="Jars and bottles that came back, and any money collected." />
       {existing.data && (
         <div className="text-xs text-faint">
           added by {existing.data.createdBy?.name || 'system'}{existing.data.updatedBy && ` · edited by ${existing.data.updatedBy.name}`}
@@ -151,12 +154,11 @@ export function ReturnForm({ id, presetCustomer }) {
       )}
 
       <div className="card grid gap-4 sm:grid-cols-2">
-        <Field label="Customer" className="sm:col-span-2">
-          <select className="input" required value={form.customer} onChange={pickCustomer}>
-            <option value="">Choose…</option>
-            {options.map((c) => <option key={c._id} value={c._id}>{c.name}{c.phone ? ` · ${c.phone}` : ''}{vesselText(c.held, app.names) ? ` · holding ${vesselText(c.held, app.names)}` : ''}{c.owed > 0 ? ` · owes ${rupees(c.owed)}` : ''}</option>)}
-          </select>
-        </Field>
+        <div className="sm:col-span-2">
+          <CustomerPicker customers={customers.data} phone={form.phone} onPhone={pickPhone} names={app.names} />
+        </div>
+        {isMobile(form.phone) && !who && <p role="alert" className="text-sm text-bad sm:col-span-2">No customer has this number. Returns can only be recorded for an existing customer.</p>}
+        {who && <div className="font-semibold sm:col-span-2">{who.name}</div>}
         {who && (
           <div className="flex flex-wrap items-center gap-1.5 sm:col-span-2" aria-live="polite">
             {vesselText(who.held, app.names) ? <span className="chip chip-accent">holding {vesselText(who.held, app.names)}</span> : <span className="chip chip-ok">holding nothing</span>}
@@ -174,7 +176,7 @@ export function ReturnForm({ id, presetCustomer }) {
       </div>
 
       <fieldset className="card space-y-2">
-        <legend className="label px-1">Vessels returned</legend>
+        <legend className="label px-1">Items returned</legend>
         <div className="grid gap-2 sm:grid-cols-2">
           {PRODUCTS.map((p) => <Stepper key={p} label={app.names[p]} value={form.returned[p]} onChange={(n) => setForm({ ...form, returned: { ...form.returned, [p]: n } })} />)}
         </div>

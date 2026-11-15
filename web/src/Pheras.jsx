@@ -78,12 +78,25 @@ export function Pheras() {
                       <span className="font-semibold">{from !== to && `${fmtDay(p.date)} · `}{p.startTime} – {p.endTime || '…'}</span>
                       {p.endTime ? <span className="text-xs text-muted">{duration(minutes(p))}</span> : <span className="chip chip-warn">out now · tap to close</span>}
                     </div>
-                    <div className="grid grid-cols-[5.5rem_1fr] gap-x-2 text-sm">
-                      <span className="text-muted">Filled out</span><span>{vesselText(p.filledOut, names) || '—'}</span>
-                      <span className="text-muted">Filled back</span><span>{vesselText(p.filledBack, names) || '—'}</span>
-                      <span className="text-muted">Empties back</span><span>{vesselText(p.emptiesBack, names) || '—'}</span>
-                      <span className="font-semibold text-accent">Sold</span><span className="font-semibold text-accent">{vesselText(p.sold, names) || '0'}</span>
-                    </div>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-muted">
+                          <th scope="col" className="py-1 text-left font-semibold">Item</th>
+                          {['Out', 'Back', 'Empties', 'Sold'].map((h) => <th key={h} scope="col" className="py-1 text-right font-semibold">{h}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {PRODUCTS.filter((k) => p.filledOut?.[k] || p.filledBack?.[k] || p.emptiesBack?.[k]).map((k) => (
+                          <tr key={k} className="border-t border-line">
+                            <th scope="row" className="py-1.5 text-left font-semibold">{names[k]}</th>
+                            <td className="text-right">{p.filledOut?.[k] || 0}</td>
+                            <td className="text-right">{p.filledBack?.[k] || 0}</td>
+                            <td className="text-right">{p.emptiesBack?.[k] || 0}</td>
+                            <td className="text-right font-bold text-accent">{p.sold?.[k] || 0}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                     <div className="text-xs text-faint">by {p.createdBy?.name || 'system'}{p.updatedBy && ` · edited by ${p.updatedBy.name}`}</div>
                   </a>
                 ))}
@@ -143,7 +156,7 @@ export function PheraForm({ id }) {
     return (
       <div className="card max-w-xl space-y-2">
         <h1 className="h1">No teams yet</h1>
-        <p className="text-muted">{app.user.role === 'admin' ? <>Add your teams under <a className="underline" href="#/settings">Settings</a> first.</> : 'Ask an admin to add the teams first.'}</p>
+        <p className="text-muted">{app.user.role === 'admin' ? <>Add your teams under <a className="underline" href="#/admin">Admin</a> first.</> : 'Ask an admin to add the teams first.'}</p>
       </div>
     );
   }

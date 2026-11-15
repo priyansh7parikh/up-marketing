@@ -1,31 +1,29 @@
 @import 'tailwindcss';
-@import '@fontsource-variable/dm-sans';
-@import '@fontsource-variable/manrope';
+@import '@fontsource-variable/plus-jakarta-sans';
 
-/* Light page, dark green sidebar, lime highlight, rounded white cards. */
+/* "Aqua": water-blue, white rounded cards, blue gradient sidebar and header. */
 @theme {
-  --font-sans: 'DM Sans Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-display: 'Manrope Variable', ui-sans-serif, system-ui, sans-serif;
-  --color-bg: #f4f6f3;
+  --font-sans: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --color-bg: #eef4fb;
   --color-surface: #ffffff;
   --color-panel: #ffffff;
-  --color-line: #e2e8e1;
-  --color-line-strong: #cdd6cd;
-  --color-fg: #17211b;
-  --color-muted: #5a6960;
-  --color-faint: #86938a;
-  --color-accent: #1f5135;
-  --color-accent-strong: #173f29;
+  --color-line: #dbe6f2;
+  --color-line-strong: #c3d4e7;
+  --color-fg: #0e2238;
+  --color-muted: #516780;
+  --color-faint: #7d92a9;
+  --color-accent: #0b63ce;
+  --color-accent-strong: #084fa8;
+  --color-accent-soft: #e3eefc;
   --color-on-accent: #ffffff;
-  --color-side: #172a20;
-  --color-side-fg: #c9d6cd;
-  --color-lime: #c7ed6b;
-  --color-ok: #2d6d45;
-  --color-ok-soft: #e7f3ea;
-  --color-warn: #8a5a0b;
-  --color-warn-soft: #fdf1dc;
-  --color-bad: #b3261e;
-  --color-bad-soft: #fde9e7;
+  --color-side-fg: #dcecff;
+  --color-ok: #0f7654;
+  --color-ok-soft: #dcf5ea;
+  --color-warn: #8f5a00;
+  --color-warn-soft: #fff0cf;
+  --color-bad: #c62b37;
+  --color-bad-soft: #fde7e9;
 }
 
 html, body, #root { height: 100%; }
@@ -49,7 +47,8 @@ body {
   .chip-ok { @apply bg-ok-soft text-ok; }
   .chip-warn { @apply bg-warn-soft text-warn; }
   .chip-bad { @apply bg-bad-soft text-bad; }
-  .chip-accent { @apply bg-ok-soft text-accent; }
-  .h1 { @apply font-display text-3xl tracking-tight text-fg; }
+  .chip-accent { @apply bg-accent-soft text-accent; }
+  .h1 { @apply font-display text-3xl font-extrabold tracking-tight text-fg; }
+  .side-grad { background: linear-gradient(165deg, #0754b1 0%, #087dba 72%, #09a2c1 100%); }
 }
 :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }

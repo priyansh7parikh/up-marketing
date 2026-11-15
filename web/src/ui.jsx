@@ -56,10 +56,17 @@ export function Field({ label, children, className = '' }) {
   );
 }
 
-// "2 Big jar, 1 Small jar" from { big_jar: 2, small_jar: 1 }. signed → "+2 Big jar, −1 Small jar".
-export function vesselText(v, names, signed = false) {
-  const parts = PRODUCTS.filter((p) => v?.[p]).map((p) => `${signed ? (v[p] > 0 ? '+' : '−') : ''}${Math.abs(v[p])} ${names[p]}`);
-  return parts.join(', ');
+// Short codes used wherever space is tight. L = litres, J = jar, B = bottle.
+export const SHORT = { small_jar: '10L J', big_jar: '20L J', small_bottle: '10L B', big_bottle: '20L B' };
+
+// "2 × 20L J, 1 × 10L J" from { big_jar: 2, small_jar: 1 }. signed → "+2 × 20L J, −1 × 10L J".
+export function vesselText(v, _names, signed = false) {
+  return PRODUCTS.filter((p) => v?.[p]).map((p) => `${signed ? (v[p] > 0 ? '+' : '−') : ''}${Math.abs(v[p])} × ${SHORT[p]}`).join(', ');
+}
+
+export function Legend({ className = '' }) {
+  const { names } = useApp();
+  return <p className={`text-xs text-muted ${className}`}>{PRODUCTS.map((p) => `${SHORT[p]} = ${names[p]}`).join(' · ')}</p>;
 }
 
 // The due/late label for a customer summary.
@@ -69,6 +76,15 @@ export function DueChip({ s }) {
   if (s.due === today()) return <span className="chip chip-warn">due today</span>;
   return s.due ? <span className="chip">due {fmtDay(s.due)}</span> : null;
 }
+
+// Same rule as the server: a customer is their 10-digit mobile number.
+export function normalizePhone(v) {
+  const d = String(v ?? '').replace(/\D/g, '');
+  if (d.length === 12 && d.startsWith('91')) return d.slice(2);
+  if (d.length === 11 && d.startsWith('0')) return d.slice(1);
+  return d;
+}
+export const isMobile = (v) => /^[6-9]\d{9}$/.test(normalizePhone(v));
 
 const digits = (phone) => (phone || '').replace(/\D/g, '');
 export const telHref = (phone) => `tel:${phone}`;
@@ -129,6 +145,7 @@ const ICONS = {
   calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>,
   chevron: <path d="m9 18 6-6-6-6" />,
   sliders: <><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" /><circle cx="15" cy="6" r="2" /><circle cx="9" cy="12" r="2" /><circle cx="17" cy="18" r="2" /></>,
+  home: <><path d="M3 11 12 3l9 8" /><path d="M5 10v10h14V10" /><path d="M10 20v-6h4v6" /></>,
   truck: <><path d="M3 6h11v10H3zM14 9h4l3 3v4h-7" /><circle cx="7" cy="18" r="2" /><circle cx="17" cy="18" r="2" /></>,
   rupee: <path d="M7 5h10M7 9h10M7 5h3a4 4 0 0 1 0 8H7l7 7" />,
 };

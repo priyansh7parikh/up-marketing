@@ -78,6 +78,33 @@ The repo is almost empty: [backend/app.js](backend/app.js) is a stub Express ser
 Orders · Returns/Collections · **Pheras** · Customers · Reports (Today / Week, including team sales) · Scan · Admin (users, teams, products, settings, audit) · Public page.
 Possible later: total vessel stock (owned / filled / empty in the godown).
 
+## Customer identity (decided 15 Nov, replaces name matching)
+
+**Why:** the same person is written many ways ("Nirav", "Nirav bhai", "Niravbhai Patel"). Matching on names would create duplicate accounts and split their pending vessels and money.
+
+**Approaches considered**
+
+| Option | Trade-off | Verdict |
+|---|---|---|
+| Match on the typed name | no phone needed; duplicates whenever spelling varies | rejected |
+| Fuzzy name matching | fewer duplicates, but can attach an order to the wrong person silently | rejected |
+| **Phone number is the account** | needs a number on every order; no duplicates, orders collate by themselves | **picked** |
+
+**Rules**
+- A customer is a **10-digit Indian mobile number** (starts 6-9). Spaces, dashes, a leading 0 and +91 are stripped. Landlines are refused.
+- A phone number is **required**: no number, no order, and no customers without one.
+- **One number is one account.** A known number always goes to that account, whatever name is typed.
+- **A different number is a different customer**, even with the same name. There are no extra numbers on an account and no Merge button.
+- The name is a label. A different name typed for a known number does not change the saved name; renaming is a deliberate link in the form.
+- **Name search is a finder only**: it lists matching customers and fills in the number when one is tapped. A name alone never selects or creates a customer.
+- **Address belongs to the order.** Each order keeps the address typed on it. The order form never pre-fills or suggests an address, so staff must ask each time. The customer record keeps the latest one for reference, and the ledger shows each order's address.
+- Only **admins** can change a customer's number; a number already in use is refused. Employees can rename and edit the address. Every change is in the edit history.
+- The same picker is used for orders and returns. Returns require an existing customer.
+- The register scanner matches entries by phone number (each register entry has name, phone and address).
+- **One-time repair at startup:** customers that already share a number are merged into the one with the most entries (this folds PP into Udit), then the unique index is built.
+
+**My calls:** changing the number on an existing order moves the order and shows a warning first; the Customers page keeps search by name or number.
+
 ## Security (required, built in phase 2)
 
 **Login**

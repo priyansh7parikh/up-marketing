@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { api } from './api.js';
-import { Avatar, BUSINESS, DueChip, Field, Icon, PageHead, PRODUCTS, SearchBox, Status, Stepper, addDays, fmtDay, go, rupees, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
+import { CustomerPicker } from './CustomerPicker.jsx';
+import { Avatar, BUSINESS, DueChip, Field, Icon, PageHead, PRODUCTS, SearchBox, isMobile, normalizePhone, Status, Stepper, addDays, fmtDay, go, rupees, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
 
 // The customer's state right now (returns are counted per customer, oldest first, not per order).
 function StatusPill({ s }) {
@@ -36,7 +37,7 @@ export function OrderTable({ orders, summaries, empty = 'No orders yet.' }) {
               </span>
             </span>
             <span className="col-span-2 lg:col-span-1">
-              <span className="block font-medium">{vesselText(o.qty, names).replace(/(\d+) /g, '$1 × ') || 'No items'} · {rupees(o.total)}</span>
+              <span className="block font-medium">{vesselText(o.qty, names) || 'No items'} · {rupees(o.total)}</span>
               <span className="block text-xs text-muted">{o.kind === 'party' ? 'Party order · ' : ''}Ordered {fmtDay(o.date)}{vesselText(o.emptiesBack, names) && ` · empties back: ${vesselText(o.emptiesBack, names)}`}</span>
             </span>
             <span>{due > 0 ? <span className="chip chip-bad">{rupees(due)} due</span> : o.total > 0 ? <span className="chip chip-ok">Paid · {o.method}</span> : <span className="chip">₹0 · no price</span>}</span>
@@ -146,7 +147,7 @@ export function UpiScreen({ order, amount, onReceived, onLater }) {
       <div className="text-sm text-muted">{order.customer.name}</div>
       <div className="text-4xl font-bold text-accent">{rupees(amount)}</div>
       {!settings.upiVpa
-        ? <p className="card max-w-sm text-warn">No UPI ID is set yet. An admin can add it under Settings.</p>
+        ? <p className="card max-w-sm text-warn">No UPI ID is set yet. An admin can add it under Admin.</p>
         : qr && <img src={qr} alt={`UPI QR code for ${rupees(amount)}`} className="w-full max-w-xs rounded-2xl border border-line bg-white" />}
       {settings.upiVpa && <div className="text-xs text-muted">{settings.upiVpa}</div>}
       {error && <p role="alert" className="text-bad">{error}</p>}
@@ -174,7 +175,7 @@ export function OrderForm({ id, presetCustomer }) {
     if (existing.loading || !customers.data || form) return;
     const o = existing.data;
     const who = o?.customer || customers.data.find((c) => c._id === presetCustomer) || {};
-    const person = { name: who.name || '', phone: who.phone || '', address: who.address || '' };
+    const person = { name: who.name || '', phone: who.phone || '', address: o?.address || '', renaming: false }; // address: this order's own, never the customer's last one
     setForm(o ? {
       date: o.date, kind: o.kind || 'regular', ...person, qty: { ...zero(), ...o.qty }, emptiesBack: { ...zero(), ...o.emptiesBack },
       deliveryType: o.deliveryType, deliveryCharge: o.deliveryCharge || 0, dueDate: o.dueDate || addDays(o.date, 1),
@@ -196,25 +197,24 @@ export function OrderForm({ id, presetCustomer }) {
   const unpriced = PRODUCTS.filter((p) => form.qty[p] > 0 && !prices[p]);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
-  // Customers are made on the fly: a typed name either matches someone we know or becomes a new customer on save.
-  const clean = (v) => (v || '').trim().toLowerCase();
-  const phone = form.phone.replace(/[\s-]/g, '');
-  const sameName = customers.data.filter((c) => clean(c.name) === clean(form.name) || (c.nameGu && clean(c.nameGu) === clean(form.name)));
-  const byPhone = sameName.filter((c) => c.phone && c.phone === phone);
-  const match = byPhone[0] || (sameName.length === 1 && (!phone || !sameName[0].phone) ? sameName[0] : null);
-  const ambiguous = !match && sameName.length > 1 && !phone;
-  const pickName = (e) => {
-    const name = e.target.value;
-    const hits = customers.data.filter((c) => clean(c.name) === clean(name));
-    setForm({ ...form, name, ...(hits.length === 1 && { phone: hits[0].phone || '', address: hits[0].address || '', ...(!id && { kind: hits[0].category === 'party' ? 'party' : 'regular' }) }) });
+  // The phone number is the account. A known number selects that customer whatever name is typed;
+  // a new number creates one. A name alone never selects or creates anybody.
+  const phone = normalizePhone(form.phone);
+  const match = isMobile(phone) ? customers.data.find((c) => c.phone === phone) : null;
+  const isNew = isMobile(phone) && !match;
+  const setPhone = (value) => {
+    const hit = customers.data.find((c) => c.phone === normalizePhone(value));
+    // A new order takes the customer's usual type. The address is never filled in: staff must ask each time.
+    setForm({ ...form, phone: value, renaming: false, ...(hit && { name: hit.name }), ...(hit && !id && { kind: hit.category === 'party' ? 'party' : 'regular' }) });
   };
-  // Editing: changing the name re-assigns the order to someone else. Say so before it happens.
+  // Editing: changing the number re-assigns the order to someone else. Say so before it happens.
   const original = existing.data?.customer;
-  const moved = Boolean(original && form.name.trim() && !ambiguous && match?._id !== original._id);
+  const moved = Boolean(original && isMobile(phone) && match?._id !== original._id);
   const customerId = async () => {
-    if (match) return match._id;
-    if (ambiguous) throw new Error(`More than one customer is named ${form.name.trim()}. Add the phone number to pick one.`);
-    return (await api('POST', '/customers', { name: form.name.trim(), phone: phone || undefined, address: form.address || undefined, category: form.kind }))._id;
+    if (!isMobile(phone)) throw new Error('Enter the customer’s 10-digit mobile number.');
+    const c = await api('POST', '/customers', { name: form.name.trim(), phone, category: form.kind }); // finds or creates
+    if (match && form.renaming && form.name.trim() && form.name.trim() !== match.name) await api('PUT', `/customers/${c._id}`, { name: form.name.trim() });
+    return c._id;
   };
   // The return date follows the order date (next day) until someone picks a different one.
   const setDate = (e) => {
@@ -233,13 +233,13 @@ export function OrderForm({ id, presetCustomer }) {
       const showQr = form.pay === 'upi' && !wasPaid && amount > 0; // ask for the money first, mark paid on "Received"
       const customer = await customerId();
       const body = {
-        date: form.date, customer, kind: form.kind, qty: form.qty, emptiesBack: form.emptiesBack,
+        date: form.date, customer, kind: form.kind, address: form.address.trim(), qty: form.qty, emptiesBack: form.emptiesBack,
         deliveryType: form.deliveryType, deliveryCharge: Number(form.deliveryCharge || 0), dueDate: form.dueDate,
         method: form.pay === 'upi' ? 'upi' : 'cash',
         paidAmount: form.pay === 'none' || showQr ? 0 : amount,
       };
       const saved = id ? await api('PUT', `/orders/${id}`, body) : await api('POST', '/orders', body);
-      if (showQr) setUpi({ order: { ...saved, customer: { _id: customer, name: form.name.trim(), phone } }, amount });
+      if (showQr) setUpi({ order: { ...saved, customer: { _id: customer, name: match && !form.renaming ? match.name : form.name.trim(), phone } }, amount });
       else go(`/customers/${customer}`);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
@@ -256,7 +256,7 @@ export function OrderForm({ id, presetCustomer }) {
 
   return (
     <form onSubmit={submit} className="max-w-3xl space-y-4">
-      <PageHead eyebrow="Customer checkout" title={id ? 'Edit order' : 'Create a new order'} sub="Record the customer, vessels, payment and return date." />
+      <PageHead eyebrow="Customer checkout" title={id ? 'Edit order' : 'Create a new order'} sub="Record the customer, items, payment and return date." />
       {existing.data && (
         <div className="text-xs text-faint">
           added by {existing.data.createdBy?.name || 'system'}{existing.data.updatedBy && ` · edited by ${existing.data.updatedBy.name}`}
@@ -264,21 +264,32 @@ export function OrderForm({ id, presetCustomer }) {
       )}
 
       <div className="card grid gap-4 sm:grid-cols-2">
-        <Field label="Customer name">
-          <input className="input" required list="customer-names" autoComplete="off" placeholder="Type a name" value={form.name} onChange={pickName} />
-          <datalist id="customer-names">
-            {customers.data.map((c) => <option key={c._id} value={c.name}>{[c.nameGu, c.phone].filter(Boolean).join(' · ')}</option>)}
-          </datalist>
-        </Field>
-        <Field label="Phone"><input className="input" type="tel" inputMode="tel" placeholder="10 digits (optional)" value={form.phone} onChange={set('phone')} /></Field>
-        <Field label="Address"><input className="input" placeholder="Optional" value={form.address} onChange={set('address')} /></Field>
-        <Field label="Date"><input className="input" type="date" required max={today()} value={form.date} onChange={setDate} /></Field>
-        <div className="flex flex-wrap items-center gap-1.5 sm:col-span-2" aria-live="polite">
-          {moved && <span role="alert" className="w-full rounded-xl bg-warn-soft px-3 py-2 text-sm font-semibold text-warn">Saving will move this order from {original.name} to {match ? match.name : `a new customer, ${form.name.trim()}`}. To fix a spelling, edit the customer on their own page.</span>}
-          {match && <><span className="chip chip-ok">existing customer</span><DueChip s={match} />{match.owed > 0 && <span className="chip chip-bad">{rupees(match.owed)} pending</span>}{vesselText(match.held, app.names) && <span className="chip chip-accent">holding {vesselText(match.held, app.names)}</span>}</>}
-          {!match && ambiguous && <span className="chip chip-warn">more than one {form.name.trim()}: add the phone number</span>}
-          {!match && !ambiguous && form.name.trim() && <span className="chip chip-accent">new customer, added when you save</span>}
+        <div className="sm:col-span-2">
+          <CustomerPicker customers={customers.data} phone={form.phone} onPhone={setPhone} names={app.names} />
         </div>
+        {moved && <p role="alert" className="rounded-xl bg-warn-soft px-3 py-2 text-sm font-semibold text-warn sm:col-span-2">Saving will move this order from {original.name} to {match ? match.name : 'a new customer'}.</p>}
+        {match && (
+          <div className="space-y-2 rounded-xl bg-ok-soft p-3 sm:col-span-2" aria-live="polite">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="font-semibold">{match.name}</span>
+              <span className="chip">existing customer</span>
+              {vesselText(match.held, app.names) && <span className="chip chip-accent">holding {vesselText(match.held, app.names)}</span>}
+              {match.owed > 0 && <span className="chip chip-bad">{rupees(match.owed)} pending</span>}
+              <DueChip s={match} />
+            </div>
+            {form.renaming
+              ? <Field label="New name for this customer"><input className="input" required value={form.name} onChange={set('name')} /></Field>
+              : <button type="button" className="text-sm text-muted underline" onClick={() => setForm({ ...form, renaming: true })}>Name is wrong? Rename this customer</button>}
+          </div>
+        )}
+        {isNew && (
+          <div className="space-y-2 sm:col-span-2" aria-live="polite">
+            <span className="chip chip-accent">new number: a new customer will be added</span>
+            <Field label="Customer name"><input className="input" required value={form.name} onChange={set('name')} /></Field>
+          </div>
+        )}
+        <Field label="Delivery address for this order"><input className="input" autoComplete="off" placeholder="Ask the customer" value={form.address} onChange={set('address')} /></Field>
+        <Field label="Date"><input className="input" type="date" required max={today()} value={form.date} onChange={setDate} /></Field>
       </div>
 
       <div className="card space-y-2">
@@ -331,7 +342,7 @@ export function OrderForm({ id, presetCustomer }) {
         {unpriced.length > 0 && (
           <p role="alert" className="rounded-xl bg-warn-soft px-3 py-2 text-sm font-semibold text-warn">
             No {form.kind === 'party' ? 'party order' : 'regular'} price is set for {unpriced.map((p) => app.names[p]).join(', ')}, so this order bills ₹0 for {unpriced.length === 1 ? 'it' : 'them'}.{' '}
-            {app.user.role === 'admin' ? <a className="underline" href="#/settings">Set prices in Settings</a> : 'Ask an admin to set prices.'} The order will be billed automatically once the price is set.
+            {app.user.role === 'admin' ? <a className="underline" href="#/admin">Set prices in Admin</a> : 'Ask an admin to set prices.'} The order will be billed automatically once the price is set.
           </p>
         )}
       </div>

@@ -14,6 +14,16 @@ const money = { type: Number, min: 0, default: 0 };
 const Vessels = new mongoose.Schema(Object.fromEntries(PRODUCTS.map((p) => [p, count])), { _id: false });
 const method = { type: String, enum: ['cash', 'upi'], default: 'cash' };
 
+// A customer IS their 10-digit mobile number. "98765 43210", "09876543210" and "+91 98765 43210" are the same person.
+function normalizePhone(v) {
+  const d = String(v ?? '').replace(/\D/g, '');
+  if (d.length === 12 && d.startsWith('91')) return d.slice(2);
+  if (d.length === 11 && d.startsWith('0')) return d.slice(1);
+  return d;
+}
+
+const MOBILE = /^[6-9]\d{9}$/; // Indian mobiles start 6-9; this also rejects 10-digit landlines
+
 const audited = (schema) => { schema.plugin(auditPlugin); return schema; };
 
 const User = mongoose.model('User', new mongoose.Schema({
@@ -27,8 +37,8 @@ const User = mongoose.model('User', new mongoose.Schema({
 const Customer = mongoose.model('Customer', audited(new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   nameGu: { type: String, trim: true }, // Gujarati spelling, used for scan matching
-  phone: { type: String, trim: true, match: /^\+?\d{10,13}$/ },
-  address: String,
+  phone: { type: String, required: [true, 'Phone number is required'], unique: true, set: normalizePhone, match: [MOBILE, 'Phone must be a 10-digit mobile number'] },
+  address: String, // the most recent address used on an order; never suggested back to staff
   category: { type: String, enum: ['regular', 'party'], default: 'regular' },
   notes: String,
 })));
@@ -45,6 +55,7 @@ const Order = mongoose.model('Order', audited(new mongoose.Schema({
   date: { ...Day, required: true, index: true },
   customer: { type: ObjectId, ref: 'Customer', required: true, index: true },
   kind: { type: String, enum: ['regular', 'party'], default: 'regular' }, // which price list it bills from
+  address: { type: String, trim: true }, // where this order went; a customer's address can differ every time
   qty: { type: Vessels, default: () => ({}) },
   emptiesBack: { type: Vessels, default: () => ({}) },
   deliveryType: { type: String, enum: ['self', 'ours'], default: 'ours' },
@@ -106,4 +117,4 @@ const Settings = mongoose.model('Settings', audited(new mongoose.Schema({
   about: String,
 })));
 
-module.exports = { User, Customer, Product, Order, Collection, Settlement, Settings, Team, Phera };
+module.exports = { normalizePhone, MOBILE, User, Customer, Product, Order, Collection, Settlement, Settings, Team, Phera };

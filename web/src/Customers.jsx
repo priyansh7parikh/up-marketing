@@ -30,7 +30,7 @@ export function Customers({ pendingOnly = false }) {
         <div>
           <div className="eyebrow mb-1">{pendingOnly ? 'Follow up' : 'Ledger'}</div>
           <h1 className="h1">{pendingOnly ? 'Pending' : 'Customers'}</h1>
-          <p className="mt-1 text-muted">{pendingOnly ? 'Customers still holding vessels or owing money, oldest first.' : 'Everyone you have sold to, with what they hold and owe.'}</p>
+          <p className="mt-1 text-muted">{pendingOnly ? 'Customers still holding jars or bottles, or owing money, oldest first.' : 'Everyone you have sold to, with what they hold and owe.'}</p>
         </div>
         <a href="#/orders/new" className="btn btn-primary">+ New order</a>
       </div>
@@ -66,6 +66,7 @@ function CustomerForm({ customer, onSaved }) {
   const [form, setForm] = useState({ ...EMPTY, ...customer });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const { user } = useApp();
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   const submit = async (e) => {
@@ -73,7 +74,8 @@ function CustomerForm({ customer, onSaved }) {
     setBusy(true);
     setError('');
     try {
-      const body = { ...form, phone: form.phone.replace(/[\s-]/g, '') || undefined };
+      const { phone, ...rest } = form;
+      const body = user.role === 'admin' ? { ...rest, phone } : rest;
       const saved = await api('PUT', `/customers/${customer._id}`, body);
       onSaved(saved);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
@@ -85,14 +87,16 @@ function CustomerForm({ customer, onSaved }) {
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Name"><input className="input" required value={form.name} onChange={set('name')} /></Field>
         <Field label="Name in Gujarati (optional)"><input className="input" lang="gu" value={form.nameGu || ''} onChange={set('nameGu')} /></Field>
-        <Field label="Phone"><input className="input" type="tel" inputMode="tel" placeholder="10 digits" value={form.phone || ''} onChange={set('phone')} /></Field>
+        <Field label={user.role === 'admin' ? 'Phone (this is the account number)' : 'Phone (only an admin can change it)'}>
+          <input className="input" type="tel" inputMode="tel" required disabled={user.role !== 'admin'} value={form.phone || ''} onChange={set('phone')} />
+        </Field>
         <Field label="Type">
           <select className="input" value={form.category} onChange={set('category')}>
             <option value="regular">Regular</option>
             <option value="party">Party order</option>
           </select>
         </Field>
-        <Field label="Address" className="sm:col-span-2"><textarea className="input py-2" rows="2" value={form.address || ''} onChange={set('address')} /></Field>
+        <Field label="Latest address (each order keeps its own)" className="sm:col-span-2"><textarea className="input py-2" rows="2" value={form.address || ''} onChange={set('address')} /></Field>
         <Field label="Notes" className="sm:col-span-2"><input className="input" value={form.notes || ''} onChange={set('notes')} /></Field>
       </div>
       {error && <p role="alert" className="text-bad">{error}</p>}
@@ -131,6 +135,9 @@ export function CustomerDetail({ id }) {
             <h1 className="text-xl font-bold">{c.name} {c.nameGu && <span className="font-normal text-muted">· {c.nameGu}</span>}</h1>
             <div className="text-sm text-muted">{[c.phone, c.address].filter(Boolean).join(' · ') || 'No phone or address'}</div>
             {c.notes && <div className="mt-1 text-sm text-muted">{c.notes}</div>}
+            <div className="mt-1 text-xs text-faint">
+              Customer since {new Date(c.createdAt).toLocaleDateString('en-IN', { month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })} · {c.statement.filter((r) => r.kind === 'order').length} orders
+            </div>
           </div>
           <span className="chip">{c.category}</span>
         </div>
@@ -153,7 +160,7 @@ export function CustomerDetail({ id }) {
       {!c.statement.length && <p className="card text-muted">No entries yet.</p>}
       <div className="space-y-2">
         <div className="hidden grid-cols-[5rem_8rem_1fr_6rem_6rem_7rem_9rem] gap-3 px-4 text-xs text-faint uppercase lg:grid">
-          <span>Date</span><span>Entry</span><span>Vessels</span><span className="text-right">Billed</span><span className="text-right">Paid</span><span className="text-right">Balance</span><span>By</span>
+          <span>Date</span><span>Entry</span><span>Items</span><span className="text-right">Billed</span><span className="text-right">Paid</span><span className="text-right">Balance</span><span>By</span>
         </div>
         {c.statement.map((r) => {
           const href = { order: `#/orders/${r.id}`, collection: `#/returns/${r.id}` }[r.kind];

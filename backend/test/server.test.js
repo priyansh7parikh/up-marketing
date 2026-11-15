@@ -7,7 +7,7 @@ const { createApp } = require('../app');
 const { requireRole, hashPassword } = require('../lib/auth');
 const { asUser, AuditLog } = require('../lib/audit');
 const { User, Order, Customer } = require('../models');
-const { api: routes, seedProducts } = require('../routes');
+const { api: routes, seedProducts, fixCustomerPhones } = require('../routes');
 
 const url = process.env.MONGO_TEST_URL || 'mongodb://127.0.0.1:27017/upmarketing_test';
 
@@ -174,7 +174,7 @@ test('server', async (t) => {
   await t.test('returns: vessels and money come off the balance; roles', async () => {
     const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
     const meena = (await call('POST', '/api/auth/login', { username: 'meena', password: 'meena-pass-1' })).cookie;
-    const adam = (await call('POST', '/api/customers', { name: 'Adam' }, meena)).json;
+    const adam = (await call('POST', '/api/customers', { name: 'Adam', phone: '9000000001' }, meena)).json;
     await call('POST', '/api/orders', { date: '2026-01-10', customer: adam._id, qty: { big_jar: 5 } }, meena); // 5 × 50 = 250
 
     assert.equal((await call('POST', '/api/collections', { date: '2026-01-11', customer: adam._id }, meena)).status, 400); // nothing entered
@@ -201,7 +201,7 @@ test('server', async (t) => {
 
   await t.test('orders saved before a price existed are billed when the price is first set', async () => {
     const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
-    const nirav = (await call('POST', '/api/customers', { name: 'Nirav' }, boss)).json;
+    const nirav = (await call('POST', '/api/customers', { name: 'Nirav', phone: '9000000002' }, boss)).json;
     const o = (await call('POST', '/api/orders', { date: '2026-01-10', customer: nirav._id, qty: { small_bottle: 2 }, deliveryCharge: 5 }, boss)).json;
     assert.equal(o.total, 5); // small bottle has no price yet
 
@@ -216,7 +216,7 @@ test('server', async (t) => {
 
   await t.test('party orders bill from the party price list', async () => {
     const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
-    const hall = (await call('POST', '/api/customers', { name: 'Wedding Hall', category: 'party' }, boss)).json;
+    const hall = (await call('POST', '/api/customers', { name: 'Wedding Hall', phone: '9000000003', category: 'party' }, boss)).json;
     const body = { date: '2026-01-10', customer: hall._id, qty: { big_jar: 10 } };
     const regular = (await call('POST', '/api/orders', body, boss)).json;
     assert.equal(regular.total, 500); // regular big jar is 50
@@ -259,5 +259,60 @@ test('server', async (t) => {
 
     assert.equal((await call('DELETE', `/api/pheras/${start.json._id}`, null, meena)).status, 403);
     assert.equal((await call('DELETE', `/api/pheras/${start.json._id}`, null, boss)).status, 200);
+  });
+
+  await t.test('customer identity: the phone number is the account', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const meena = (await call('POST', '/api/auth/login', { username: 'meena', password: 'meena-pass-1' })).cookie;
+
+    assert.equal((await call('POST', '/api/customers', { name: 'No Phone' }, meena)).status, 400);
+    assert.equal((await call('POST', '/api/customers', { name: 'Landline', phone: '079-2345678' }, meena)).status, 400);
+
+    const first = await call('POST', '/api/customers', { name: 'Nirav', phone: '+91 98250 11111' }, meena);
+    assert.equal(first.status, 201);
+    assert.equal(first.json.phone, '9825011111'); // stored as 10 digits
+
+    // Same number written differently, with a different spelling of the name → the same account, name unchanged.
+    const again = await call('POST', '/api/customers', { name: 'Niravbhai Patel', phone: '098250-11111' }, meena);
+    assert.equal(again.status, 200);
+    assert.equal(again.json._id, first.json._id);
+    assert.equal(again.json.name, 'Nirav');
+
+    // Same name, different number → a different customer.
+    const other = await call('POST', '/api/customers', { name: 'Nirav', phone: '9825022222' }, meena);
+    assert.equal(other.status, 201);
+    assert.notEqual(other.json._id, first.json._id);
+
+    // Renaming is fine for staff; changing the number is admin only and can't collide.
+    assert.equal((await call('PUT', `/api/customers/${first.json._id}`, { name: 'Nirav P', phone: '9825011111' }, meena)).status, 200);
+    assert.equal((await call('PUT', `/api/customers/${first.json._id}`, { phone: '9825033333' }, meena)).status, 403);
+    assert.equal((await call('PUT', `/api/customers/${first.json._id}`, { phone: '9825022222' }, boss)).status, 409);
+    assert.equal((await call('PUT', `/api/customers/${first.json._id}`, { phone: '9825033333' }, boss)).json.phone, '9825033333');
+
+    // Each order keeps its own address; the customer shows the latest.
+    await call('POST', '/api/orders', { date: '2026-01-10', customer: other.json._id, qty: { big_jar: 1 }, address: 'Hall X' }, meena);
+    await call('POST', '/api/orders', { date: '2026-01-11', customer: other.json._id, qty: { big_jar: 1 }, address: 'Farm Y' }, meena);
+    const detail = (await call('GET', `/api/customers/${other.json._id}`, null, meena)).json;
+    assert.equal(detail.address, 'Farm Y');
+    assert.deepEqual(detail.statement.map((r) => r.note), ['Farm Y', 'Hall X']);
+  });
+
+  await t.test('one-time repair merges customers that share a number', async () => {
+    const col = mongoose.connection.collection('customers');
+    await col.dropIndex('phone_1');
+    const [keepId, dropId] = [new mongoose.Types.ObjectId(), new mongoose.Types.ObjectId()];
+    await col.insertMany([
+      { _id: dropId, name: 'PP', phone: '9409223430', createdAt: new Date('2026-01-01') },
+      { _id: keepId, name: 'Udit', phone: '9409223430', createdAt: new Date('2026-01-02') },
+    ]);
+    await asUser(null, () => Order.create({ date: '2026-01-10', customer: keepId, qty: { small_jar: 1 } }));
+    await asUser(null, () => Order.create({ date: '2026-01-11', customer: keepId, qty: { small_jar: 1 } }));
+    await asUser(null, () => Order.create({ date: '2026-01-12', customer: dropId, qty: { small_jar: 1 } }));
+
+    await fixCustomerPhones();
+    const left = await Customer.find({ phone: '9409223430' }).lean();
+    assert.deepEqual(left.map((c) => c.name), ['Udit']);
+    assert.equal(await Order.countDocuments({ customer: keepId }), 3); // nothing lost
+    await assert.rejects(() => col.insertOne({ name: 'Dup', phone: '9409223430' }), /E11000/); // index is back
   });
 });
