@@ -75,6 +75,30 @@ const Settlement = mongoose.model('Settlement', audited(new mongoose.Schema({
   reason: { type: String, required: true, trim: true },
 })));
 
+const Team = mongoose.model('Team', audited(new mongoose.Schema({
+  name: { type: String, required: true, trim: true, unique: true },
+  active: { type: Boolean, default: true },
+})));
+
+// One delivery round by one team. Route customers are prepaid (tokens), so a phera has no customers or cash.
+const Time = { type: String, match: /^([01]\d|2[0-3]):[0-5]\d$/ };
+const pheraSchema = new mongoose.Schema({
+  date: { ...Day, required: true, index: true },
+  team: { type: ObjectId, ref: 'Team', required: true, index: true },
+  startTime: { ...Time, required: true },
+  endTime: Time, // empty while the team is still out
+  filledOut: { type: Vessels, default: () => ({}) },
+  filledBack: { type: Vessels, default: () => ({}) },
+  emptiesBack: { type: Vessels, default: () => ({}) },
+});
+pheraSchema.pre('validate', function () {
+  if (this.endTime && this.endTime < this.startTime) this.invalidate('endTime', 'End time is before the start time');
+  for (const p of PRODUCTS) {
+    if ((this.filledBack?.[p] || 0) > (this.filledOut?.[p] || 0)) this.invalidate(`filledBack.${p}`, `More ${p.replace('_', ' ')}s came back filled than went out`);
+  }
+});
+const Phera = mongoose.model('Phera', audited(pheraSchema));
+
 const Settings = mongoose.model('Settings', audited(new mongoose.Schema({
   upiVpa: String,
   phone: String,
@@ -82,4 +106,4 @@ const Settings = mongoose.model('Settings', audited(new mongoose.Schema({
   about: String,
 })));
 
-module.exports = { User, Customer, Product, Order, Collection, Settlement, Settings };
+module.exports = { User, Customer, Product, Order, Collection, Settlement, Settings, Team, Phera };

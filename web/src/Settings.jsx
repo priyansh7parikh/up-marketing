@@ -1,6 +1,35 @@
 import { Fragment, useState } from 'react';
 import { api } from './api.js';
-import { Field, useApp } from './ui.jsx';
+import { Field, Status, useApp, useLoad } from './ui.jsx';
+
+// Delivery teams for pheras. Teams are switched off, not deleted, so old pheras keep their team name.
+function Teams() {
+  const { data, reload, ...status } = useLoad(() => api('GET', '/teams'));
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const run = async (fn) => { setError(''); try { await fn(); reload(); } catch (e) { setError(e.message); } };
+  const add = (e) => { e.preventDefault(); run(async () => { await api('POST', '/teams', { name }); setName(''); }); };
+  return (
+    <section className="space-y-3">
+      <fieldset className="card space-y-3">
+        <legend className="label px-1">Delivery teams (for pheras)</legend>
+        <Status {...status} />
+        {data && !data.length && <p className="text-sm text-muted">No teams yet. Add your 3 to 5 teams here.</p>}
+        {(data || []).map((t) => (
+          <div key={t._id} className="flex items-center justify-between gap-3">
+            <span className={`font-semibold ${t.active ? '' : 'text-faint line-through'}`}>{t.name}</span>
+            <button type="button" className="btn" onClick={() => run(() => api('PUT', `/teams/${t._id}`, { active: !t.active }))}>{t.active ? 'Switch off' : 'Switch on'}</button>
+          </div>
+        ))}
+        <form onSubmit={add} className="flex gap-2 border-t border-line pt-3">
+          <input className="input" required aria-label="New team name" placeholder="New team name" value={name} onChange={(e) => setName(e.target.value)} />
+          <button className="btn btn-primary shrink-0">Add team</button>
+        </form>
+        {error && <p role="alert" className="text-bad">{error}</p>}
+      </fieldset>
+    </section>
+  );
+}
 
 // Admin only (the server enforces it too): prices and the business/UPI details.
 export default function Settings() {
@@ -30,7 +59,8 @@ export default function Settings() {
   const setB = (k) => (e) => setBiz({ ...biz, [k]: e.target.value });
 
   return (
-    <form onSubmit={save} className="max-w-2xl space-y-4">
+    <div className="max-w-2xl space-y-8">
+    <form onSubmit={save} className="space-y-4">
       <h1 className="h1">Settings</h1>
       <fieldset className="card space-y-3">
         <legend className="label px-1">Prices (₹ each)</legend>
@@ -59,5 +89,7 @@ export default function Settings() {
       {msg?.ok && <p role="status" className="text-ok">{msg.ok}</p>}
       <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save settings'}</button>
     </form>
+    <Teams />
+    </div>
   );
 }

@@ -56,6 +56,7 @@ function createApp({ mongoUrl, sessionSecret, production = false, sessionDays = 
 
   app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
     if (err.name === 'ValidationError' || err.name === 'CastError') return res.status(400).json({ error: err.message });
+    if (err.code === 11000) return res.status(409).json({ error: 'That name is already used' });
     if (err.status && err.status < 500) return res.status(err.status).json({ error: err.expose === false ? 'Bad request' : err.message });
     console.error(err);
     res.status(500).json({ error: 'Something went wrong' });

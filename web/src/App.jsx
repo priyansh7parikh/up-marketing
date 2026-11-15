@@ -4,6 +4,7 @@ import { AppCtx, Field, Icon, Status, go, initials, useApp, useLoad, useRoute } 
 import { CustomerDetail, Customers } from './Customers.jsx';
 import { OrderForm, Orders } from './Orders.jsx';
 import Overview from './Overview.jsx';
+import { PheraForm, Pheras } from './Pheras.jsx';
 import { ReturnForm, Returns } from './Returns.jsx';
 import Settings from './Settings.jsx';
 
@@ -48,7 +49,8 @@ const TABS = [
   { id: 'overview', href: '#/', label: 'Overview', icon: 'box' },
   { id: 'orders', href: '#/orders', label: 'Orders', long: 'All orders', icon: 'clipboard' },
   { id: 'returns', href: '#/returns', label: 'Returns', icon: 'rotate' },
-  { id: 'pending', href: '#/customers?pending=1', label: 'Pending', long: 'Pending report', icon: 'alert' },
+  { id: 'pheras', href: '#/pheras', label: 'Pheras', icon: 'truck' },
+  { id: 'pending', href: '#/customers?pending=1', label: 'Pending', long: 'Pending report', icon: 'alert', more: true },
   { id: 'customers', href: '#/customers', label: 'Customers', icon: 'users', more: true },
   { id: 'settings', href: '#/settings', label: 'Settings', icon: 'sliders', admin: true, more: true },
 ];
@@ -100,7 +102,7 @@ function Shell({ user, onLogout, active, routeKey, children }) {
           <a key={t.id} href={t.href} aria-current={active === t.id || (t.id === 'more' && tabs.some((x) => x.more && x.id === active)) ? 'page' : undefined}
             className={`relative flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-semibold ${active === t.id || (t.id === 'more' && tabs.some((x) => x.more && x.id === active)) ? 'border-t-2 border-accent text-accent' : 'text-muted'}`}>
             <Icon name={t.icon} />{t.label}
-            {t.id === 'pending' && overdue > 0 && <span className="absolute top-1.5 left-1/2 ml-2 h-2 w-2 rounded-full bg-bad" />}
+            {t.id === 'more' && overdue > 0 && <span className="absolute top-1.5 left-1/2 ml-2 h-2 w-2 rounded-full bg-bad" />}
           </a>
         ))}
       </nav>
@@ -131,6 +133,10 @@ function Page({ parts, query }) {
   if (section === 'returns') {
     if (a) return <ReturnForm key={a} id={a === 'new' ? null : a} presetCustomer={query.customer} />;
     return <Returns />;
+  }
+  if (section === 'pheras') {
+    if (a) return <PheraForm key={a} id={a === 'new' ? null : a} />;
+    return <Pheras />;
   }
   if (section === 'more') return <More />;
   if (section === 'settings') return <Settings />;

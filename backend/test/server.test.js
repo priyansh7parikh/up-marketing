@@ -230,4 +230,34 @@ test('server', async (t) => {
     assert.equal((await call('PUT', `/api/orders/${regular._id}`, { kind: 'party' }, boss)).json.total, 350); // switching type re-bills
     assert.equal((await call('POST', '/api/orders', { ...body, kind: 'vip' }, boss)).status, 400);
   });
+
+  await t.test('pheras: teams, start and close a round, sold = out − back', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const meena = (await call('POST', '/api/auth/login', { username: 'meena', password: 'meena-pass-1' })).cookie;
+
+    assert.equal((await call('POST', '/api/teams', { name: 'Team A' }, meena)).status, 403);
+    const team = (await call('POST', '/api/teams', { name: 'Team A' }, boss)).json;
+
+    // Employee starts a round, then closes it.
+    const start = await call('POST', '/api/pheras', { date: '2026-01-10', team: team._id, startTime: '08:30', filledOut: { big_jar: 40, small_jar: 20 } }, meena);
+    assert.equal(start.status, 201);
+    assert.deepEqual(start.json.sold, { small_jar: 20, big_jar: 40, small_bottle: 0, big_bottle: 0 }); // nothing back yet
+    const close = await call('PUT', `/api/pheras/${start.json._id}`, { endTime: '12:15', filledBack: { big_jar: 6, small_jar: 5 }, emptiesBack: { big_jar: 30 } }, meena);
+    assert.equal(close.json.sold.big_jar, 34);
+    assert.equal(close.json.sold.small_jar, 15);
+
+    const list = (await call('GET', '/api/pheras?from=2026-01-10&to=2026-01-10', null, meena)).json;
+    assert.equal(list.length, 1);
+    assert.equal(list[0].team.name, 'Team A');
+    assert.equal(list[0].createdBy.name, 'Meena');
+
+    const bad = (body) => call('PUT', `/api/pheras/${start.json._id}`, body, meena).then((r) => r.status);
+    assert.equal(await bad({ filledBack: { big_jar: 41 } }), 400); // more back than went out
+    assert.equal(await bad({ endTime: '07:00' }), 400); // ends before it starts
+    assert.equal(await bad({ startTime: '25:00' }), 400);
+    assert.equal((await call('POST', '/api/pheras', { date: '2026-01-10', team: '000000000000000000000000', startTime: '09:00' }, meena)).status, 400);
+
+    assert.equal((await call('DELETE', `/api/pheras/${start.json._id}`, null, meena)).status, 403);
+    assert.equal((await call('DELETE', `/api/pheras/${start.json._id}`, null, boss)).status, 200);
+  });
 });

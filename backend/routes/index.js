@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const { requireRole } = require('../lib/auth');
 const { asUser } = require('../lib/audit');
 const { PRODUCTS, day, summarizeAll, statement } = require('../lib/balances');
-const { Customer, Product, Order, Collection, Settlement, Settings, User } = require('../models');
+const { Customer, Product, Order, Collection, Settlement, Settings, User, Team, Phera } = require('../models');
 
 const api = express.Router();
 const admin = requireRole('admin');
@@ -208,5 +208,54 @@ api.delete('/collections/:id', admin, h(async (req, res) => {
 
 // Names only, for "collected by" pickers. Everyone logged in may read it.
 api.get('/staff', h(async (req, res) => res.json(await User.find({ active: true }, 'name role').sort('name').lean())));
+
+// ---- teams (admin manages; everyone reads) ----
+api.get('/teams', h(async (req, res) => res.json(await Team.find().sort('name').lean())));
+api.post('/teams', admin, h(async (req, res) => res.status(201).json(await Team.create(pick(req.body, ['name'])))));
+api.put('/teams/:id', admin, h(async (req, res) => {
+  const t = await Team.findById(req.params.id);
+  if (!t) return notFound(res);
+  t.set(pick(req.body, ['name', 'active']));
+  res.json(await t.save());
+}));
+
+// ---- pheras (delivery rounds) ----
+const PHERA_FIELDS = ['date', 'team', 'startTime', 'endTime', 'filledOut', 'filledBack', 'emptiesBack'];
+// sold = filled out − filled back. Computed, never stored, so it can't disagree with the counts.
+const withSold = (p) => ({ ...p, sold: Object.fromEntries(PRODUCTS.map((k) => [k, (p.filledOut?.[k] || 0) - (p.filledBack?.[k] || 0)])) });
+const pheraPeople = (q) => q.populate('team', 'name').populate('createdBy updatedBy', who);
+
+async function savePhera(p, body) {
+  p.set(pick(body, PHERA_FIELDS));
+  if (p.endTime === '') p.endTime = undefined;
+  if (p.isModified('team') && !(await Team.exists({ _id: p.team }))) throw Object.assign(new Error('Unknown team'), { status: 400 });
+  await p.save();
+  return withSold(p.toObject());
+}
+
+api.get('/pheras', h(async (req, res) => {
+  const filter = dateFilter({ from: req.query.from, to: req.query.to });
+  if (!filter) return res.status(400).json({ error: 'from/to must be YYYY-MM-DD' });
+  res.json((await pheraPeople(Phera.find(filter).sort('-date -startTime').limit(500)).lean()).map(withSold));
+}));
+
+api.get('/pheras/:id', h(async (req, res) => {
+  const p = await pheraPeople(Phera.findById(req.params.id)).lean();
+  return p ? res.json(withSold(p)) : notFound(res);
+}));
+
+api.post('/pheras', h(async (req, res) => res.status(201).json(await savePhera(new Phera(), req.body))));
+
+api.put('/pheras/:id', h(async (req, res) => {
+  const p = await Phera.findById(req.params.id);
+  return p ? res.json(await savePhera(p, req.body)) : notFound(res);
+}));
+
+api.delete('/pheras/:id', admin, h(async (req, res) => {
+  const p = await Phera.findById(req.params.id);
+  if (!p) return notFound(res);
+  await p.deleteOne();
+  res.json({ ok: true });
+}));
 
 module.exports = { api, seedProducts };
