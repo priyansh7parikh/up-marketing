@@ -1,0 +1,63 @@
+import { Fragment, useState } from 'react';
+import { api } from './api.js';
+import { Field, useApp } from './ui.jsx';
+
+// Admin only (the server enforces it too): prices and the business/UPI details.
+export default function Settings() {
+  const { products, settings, reloadMeta, user } = useApp();
+  const [prices, setPrices] = useState(Object.fromEntries(products.map((p) => [p.key, { price: p.price, partyPrice: p.partyPrice || 0 }])));
+  const [biz, setBiz] = useState({ upiVpa: '', ...settings });
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  if (user.role !== 'admin') return <p className="card text-muted">Admins only.</p>;
+
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setMsg(null);
+    try {
+      const want = (p) => ({ price: Number(prices[p.key].price), partyPrice: Number(prices[p.key].partyPrice) });
+      if (products.some((p) => Object.values(want(p)).some((n) => !Number.isFinite(n) || n < 0))) throw new Error('Prices must be numbers, 0 or more.');
+      const changed = products.filter((p) => want(p).price !== p.price || want(p).partyPrice !== (p.partyPrice || 0));
+      const saved = await Promise.all(changed.map((p) => api('PUT', `/products/${p.key}`, want(p))));
+      const rebilled = saved.reduce((n, p) => n + (p.rebilled || 0), 0);
+      await api('PUT', '/settings', { upiVpa: biz.upiVpa.trim() });
+      await reloadMeta();
+      setMsg({ ok: rebilled ? `Saved. ${rebilled} earlier order line${rebilled === 1 ? ' was' : 's were'} billed at the new price.` : 'Saved.' });
+    } catch (err) { setMsg({ error: err.message }); } finally { setBusy(false); }
+  };
+  const setB = (k) => (e) => setBiz({ ...biz, [k]: e.target.value });
+
+  return (
+    <form onSubmit={save} className="max-w-2xl space-y-4">
+      <h1 className="h1">Settings</h1>
+      <fieldset className="card space-y-3">
+        <legend className="label px-1">Prices (₹ each)</legend>
+        <div className="grid grid-cols-[1fr_6.5rem_6.5rem] items-center gap-x-3 gap-y-2 sm:grid-cols-[1fr_9rem_9rem]">
+          <span />
+          <span className="label mb-0">Regular</span>
+          <span className="label mb-0">Party order</span>
+          {products.map((p) => (
+            <Fragment key={p.key}>
+              <span className="font-semibold">{p.name}</span>
+              {[['price', 'regular'], ['partyPrice', 'party order']].map(([field, word]) => (
+                <input key={field} className="input" inputMode="decimal" required aria-label={`${p.name} ${word} price`}
+                  value={prices[p.key][field]} onChange={(e) => setPrices({ ...prices, [p.key]: { ...prices[p.key], [field]: e.target.value } })} />
+              ))}
+            </Fragment>
+          ))}
+        </div>
+        <p className="text-xs text-muted">Each order bills from the Regular or the Party order list, whichever type the order is. Changing a price applies to new orders only. Orders made while a vessel had no price are billed when you first set it.</p>
+      </fieldset>
+      <fieldset className="card grid gap-4 sm:grid-cols-2">
+        <legend className="label px-1">Payment</legend>
+        <Field label="Your UPI ID (customers pay to this)" className="sm:col-span-2"><input className="input" autoCapitalize="none" placeholder="name@bank" value={biz.upiVpa || ''} onChange={setB('upiVpa')} /></Field>
+        <p className="text-xs text-muted sm:col-span-2">Used for the payment QR and the WhatsApp pay link on UPI orders.</p>
+      </fieldset>
+      {msg?.error && <p role="alert" className="text-bad">{msg.error}</p>}
+      {msg?.ok && <p role="status" className="text-ok">{msg.ok}</p>}
+      <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save settings'}</button>
+    </form>
+  );
+}

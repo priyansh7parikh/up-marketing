@@ -5,8 +5,8 @@
   "main": "app.js",
   "scripts": {
     "test": "node --test",
-    "dev": "node --watch app.js",
-    "start": "node app.js"
+    "dev": "node --env-file-if-exists=.env --watch app.js",
+    "start": "node --env-file-if-exists=.env app.js"
   },
   "author": "",
   "license": "ISC",

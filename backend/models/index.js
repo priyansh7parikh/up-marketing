@@ -37,17 +37,20 @@ const Product = mongoose.model('Product', audited(new mongoose.Schema({
   key: { type: String, enum: PRODUCTS, required: true, unique: true },
   name: { type: String, required: true },
   nameGu: String,
-  price: { ...money, required: true },
+  price: { ...money, required: true }, // regular customers
+  partyPrice: money, // party orders
 })));
 
 const Order = mongoose.model('Order', audited(new mongoose.Schema({
   date: { ...Day, required: true, index: true },
   customer: { type: ObjectId, ref: 'Customer', required: true, index: true },
+  kind: { type: String, enum: ['regular', 'party'], default: 'regular' }, // which price list it bills from
   qty: { type: Vessels, default: () => ({}) },
   emptiesBack: { type: Vessels, default: () => ({}) },
   deliveryType: { type: String, enum: ['self', 'ours'], default: 'ours' },
   deliveryCharge: money,
-  total: money, // prices are snapshotted into this at save time
+  prices: { type: new mongoose.Schema(Object.fromEntries(PRODUCTS.map((p) => [p, money])), { _id: false }) }, // unit prices when created
+  total: money, // server-computed: qty × prices + deliveryCharge
   paidAmount: money,
   method,
   dueDate: Day, // empty → next day
@@ -73,7 +76,6 @@ const Settlement = mongoose.model('Settlement', audited(new mongoose.Schema({
 })));
 
 const Settings = mongoose.model('Settings', audited(new mongoose.Schema({
-  businessName: String,
   upiVpa: String,
   phone: String,
   address: String,

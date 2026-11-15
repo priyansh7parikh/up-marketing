@@ -88,8 +88,8 @@ function summarize(lines, today) {
   };
 }
 
-// All customers → rows for the daily/weekly report: one per customer with anything pending, oldest first.
-function pendingReport({ orders = [], collections = [], settlements = [] }, today) {
+// All docs → Map(customerId → summary).
+function summarizeAll({ orders = [], collections = [], settlements = [] }, today) {
   const byCustomer = new Map();
   const group = (key, doc) => {
     const id = String(doc.customer?._id ?? doc.customer);
@@ -99,11 +99,39 @@ function pendingReport({ orders = [], collections = [], settlements = [] }, toda
   orders.forEach((d) => group('orders', d));
   collections.forEach((d) => group('collections', d));
   settlements.forEach((d) => group('settlements', d));
+  return new Map([...byCustomer].map(([id, docs]) => [id, summarize(toLines(docs), today)]));
+}
 
-  return [...byCustomer]
-    .map(([customer, docs]) => ({ customer, ...summarize(toLines(docs), today) }))
+// Rows for the daily/weekly report: one per customer with anything pending, oldest first.
+function pendingReport(docs, today) {
+  return [...summarizeAll(docs, today)]
+    .map(([customer, s]) => ({ customer, ...s }))
     .filter((r) => r.pending)
     .sort((a, b) => (a.oldestDate < b.oldestDate ? -1 : a.oldestDate > b.oldestDate ? 1 : 0));
 }
 
-module.exports = { PRODUCTS, day, addDays, toLines, summarize, pendingReport };
+// One customer's history as a statement: every entry with its vessel/money effect and running balances.
+function statement({ orders = [], collections = [], settlements = [] }) {
+  const vessels = (add = {}, sub = {}) => Object.fromEntries(
+    PRODUCTS.map((p) => [p, (add[p] || 0) - (sub[p] || 0)]).filter(([, n]) => n),
+  );
+  const rows = [
+    ...orders.map((o) => ({ kind: 'order', doc: o, vessels: vessels(o.qty, o.emptiesBack), billed: o.total || 0, paid: o.paidAmount || 0 })),
+    ...collections.map((c) => ({ kind: 'collection', doc: c, vessels: vessels({}, c.returned), billed: 0, paid: c.amount || 0 })),
+    ...settlements.map((s) => ({ kind: 'settlement', doc: s, vessels: vessels({}, s.lost), billed: 0, paid: s.amount || 0 })),
+  ].sort((a, b) => day(a.doc.date).localeCompare(day(b.doc.date)) || String(a.doc.createdAt).localeCompare(String(b.doc.createdAt)));
+
+  const held = Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
+  let net = 0; // paise; negative = credit
+  return rows.map(({ kind, doc, vessels: v, billed, paid }) => {
+    for (const [p, n] of Object.entries(v)) held[p] = Math.max(0, held[p] + n); // extra returns aren't ours
+    net += paise(billed) - paise(paid);
+    return {
+      kind, id: doc._id, date: day(doc.date), vessels: v, billed, paid, method: doc.method, note: doc.reason,
+      by: doc.createdBy, editedBy: doc.updatedBy,
+      held: Object.fromEntries(Object.entries(held).filter(([, n]) => n)), balance: net / 100,
+    };
+  });
+}
+
+module.exports = { PRODUCTS, day, addDays, toLines, summarize, summarizeAll, pendingReport, statement };

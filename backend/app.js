@@ -5,8 +5,10 @@ const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const mongoose = require('mongoose');
 const auth = require('./lib/auth');
+const routes = require('./routes');
+const config = require('./config');
 
-function createApp({ mongoUrl, sessionSecret, production = false, api = express.Router() }) {
+function createApp({ mongoUrl, sessionSecret, production = false, sessionDays = 30, api = express.Router() }) {
   if (!sessionSecret || sessionSecret.length < 32) throw new Error('SESSION_SECRET must be at least 32 characters (e.g. `openssl rand -hex 32`)');
   const app = express();
   app.disable('x-powered-by');
@@ -17,7 +19,7 @@ function createApp({ mongoUrl, sessionSecret, production = false, api = express.
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY', // no clickjacking via iframes
       'Referrer-Policy': 'same-origin',
-      'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
       ...(production && { 'Strict-Transport-Security': 'max-age=31536000' }),
     });
     next();
@@ -30,7 +32,7 @@ function createApp({ mongoUrl, sessionSecret, production = false, api = express.
   ));
   app.use(express.json({ limit: '100kb' })); // shortcut: the scan route will get its own larger limit for photos
 
-  const store = MongoStore.create({ mongoUrl, ttl: 30 * 24 * 3600 });
+  const store = MongoStore.create({ mongoUrl, ttl: sessionDays * 24 * 3600 });
   app.locals.sessionStore = store; // so tests/shutdown can close its connection
   app.use(session({
     name: 'upm.sid',
@@ -38,12 +40,12 @@ function createApp({ mongoUrl, sessionSecret, production = false, api = express.
     resave: false,
     saveUninitialized: false,
     store,
-    cookie: { httpOnly: true, sameSite: 'lax', secure: production, maxAge: 30 * 24 * 3600 * 1000 },
+    cookie: { httpOnly: true, sameSite: 'lax', secure: production, maxAge: sessionDays * 24 * 3600 * 1000 },
   }));
 
   app.use('/api/auth', auth.router);
   app.use('/api', auth.requireAuth);
-  app.use('/api', api); // phase 3 passes the real routes here
+  app.use('/api', api);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
   const web = path.join(__dirname, '..', 'web', 'dist');
@@ -62,12 +64,10 @@ function createApp({ mongoUrl, sessionSecret, production = false, api = express.
 }
 
 if (require.main === module) {
-  const { MONGO_URL = 'mongodb://127.0.0.1:27017/upmarketing', SESSION_SECRET, PORT = 3000, NODE_ENV } = process.env;
-  if (!SESSION_SECRET) throw new Error('Set SESSION_SECRET');
-  mongoose.connect(MONGO_URL)
+  mongoose.connect(config.mongoUrl)
     .then(() => auth.seedAdmin())
-    .then(() => createApp({ mongoUrl: MONGO_URL, sessionSecret: SESSION_SECRET, production: NODE_ENV === 'production' })
-      .listen(PORT, () => console.log(`Up-Marketing on :${PORT}`)))
+    .then(() => routes.seedProducts())
+    .then(() => createApp({ ...config, api: routes.api }).listen(config.port, () => console.log(`Up-Marketing on :${config.port}`)))
     .catch((e) => { console.error(e.message); process.exit(1); });
 }
 

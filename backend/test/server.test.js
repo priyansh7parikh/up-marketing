@@ -7,6 +7,7 @@ const { createApp } = require('../app');
 const { requireRole, hashPassword } = require('../lib/auth');
 const { asUser, AuditLog } = require('../lib/audit');
 const { User, Order, Customer } = require('../models');
+const { api: routes, seedProducts } = require('../routes');
 
 const url = process.env.MONGO_TEST_URL || 'mongodb://127.0.0.1:27017/upmarketing_test';
 
@@ -23,10 +24,14 @@ test('server', async (t) => {
   const admin = await User.create({ username: 'priyansh', name: 'Priyansh', role: 'admin', passwordHash: await hashPassword('admin-pass-1') });
   const emp = await User.create({ username: 'ravi', name: 'Ravi', role: 'employee', passwordHash: await hashPassword('ravi-pass-1') });
 
-  // Test-only routes standing in for phase 3.
+  await User.create({ username: 'meena', name: 'Meena', role: 'employee', passwordHash: await hashPassword('meena-pass-1') });
+  await seedProducts();
+
+  // Test-only probes + the real routes.
   const api = express.Router();
   api.get('/whoami', (req, res) => res.json(req.user));
   api.delete('/admin-thing', requireRole('admin'), (req, res) => res.json({ ok: true }));
+  api.use(routes);
   const app = createApp({ mongoUrl: url, sessionSecret: 'test-secret-'.padEnd(40, 'x'), api });
 
   const server = app.listen(0);
@@ -124,5 +129,105 @@ test('server', async (t) => {
   await t.test('bad data is rejected', async () => {
     await assert.rejects(() => asUser(null, () => Order.create({ date: '15/11/2026', customer: new mongoose.Types.ObjectId() })), /date/);
     await assert.rejects(() => asUser(null, () => Order.create({ date: '2026-11-15', customer: new mongoose.Types.ObjectId(), qty: { small_jar: -1 } })), /small_jar/);
+  });
+
+  await t.test('customers + orders: prices, balances, ledger, roles', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const meena = (await call('POST', '/api/auth/login', { username: 'meena', password: 'meena-pass-1' })).cookie;
+
+    assert.equal((await call('PUT', '/api/products/big_jar', { price: 40 }, meena)).status, 403);
+    assert.equal((await call('PUT', '/api/products/big_jar', { price: 40 }, boss)).json.price, 40);
+    await call('PUT', '/api/products/small_jar', { price: 25 }, boss);
+
+    const john = (await call('POST', '/api/customers', { name: 'John', phone: '9876500000', createdBy: admin._id }, meena)).json;
+    assert.equal(john.createdBy, String((await User.findOne({ username: 'meena' }))._id)); // client can't fake createdBy
+
+    const o = await call('POST', '/api/orders', { date: '2026-01-10', customer: john._id, qty: { big_jar: 2, small_jar: 1 }, deliveryCharge: 10, total: 1 }, meena);
+    assert.equal(o.status, 201);
+    assert.equal(o.json.total, 2 * 40 + 25 + 10); // server computes total; client value ignored
+
+    await call('PUT', '/api/products/big_jar', { price: 50 }, boss); // later price change doesn't touch old orders
+    const edited = await call('PUT', `/api/orders/${o.json._id}`, { qty: { big_jar: 3, small_jar: 1 } }, meena);
+    assert.equal(edited.json.total, 3 * 40 + 25 + 10);
+
+    const list = (await call('GET', '/api/customers', null, meena)).json;
+    const row = list.find((c) => c.name === 'John');
+    assert.deepEqual(row.held, { small_jar: 1, big_jar: 3 });
+    assert.equal(row.owed, 155);
+    assert.equal(row.overdue, true);
+
+    const detail = (await call('GET', `/api/customers/${john._id}`, null, meena)).json;
+    assert.equal(detail.statement.length, 1);
+    assert.equal(detail.statement[0].by.name, 'Meena');
+    assert.equal(detail.statement[0].balance, 155);
+
+    const ol = await call('GET', '/api/orders?from=2026-01-10&to=2026-01-10', null, meena); assert.equal(ol.json.length, 1, JSON.stringify(ol));
+    assert.equal((await call('GET', '/api/orders?from=bad', null, meena)).status, 400);
+    assert.equal((await call('POST', '/api/orders', { date: '2026-01-10', customer: '000000000000000000000000' }, meena)).status, 400);
+
+    assert.equal((await call('DELETE', `/api/orders/${o.json._id}`, null, meena)).status, 403);
+    assert.equal((await call('DELETE', `/api/customers/${john._id}`, null, boss)).status, 409); // has entries
+    assert.equal((await call('DELETE', `/api/orders/${o.json._id}`, null, boss)).status, 200);
+    assert.equal((await AuditLog.countDocuments({ docId: o.json._id })), 3); // create, update, delete
+  });
+
+  await t.test('returns: vessels and money come off the balance; roles', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const meena = (await call('POST', '/api/auth/login', { username: 'meena', password: 'meena-pass-1' })).cookie;
+    const adam = (await call('POST', '/api/customers', { name: 'Adam' }, meena)).json;
+    await call('POST', '/api/orders', { date: '2026-01-10', customer: adam._id, qty: { big_jar: 5 } }, meena); // 5 × 50 = 250
+
+    assert.equal((await call('POST', '/api/collections', { date: '2026-01-11', customer: adam._id }, meena)).status, 400); // nothing entered
+    const c = await call('POST', '/api/collections', { date: '2026-01-11', customer: adam._id, returned: { big_jar: 3 }, amount: 100, method: 'upi' }, meena);
+    assert.equal(c.status, 201);
+    assert.equal(c.json.collectedBy, c.json.createdBy); // defaults to whoever entered it
+
+    const row = (await call('GET', '/api/customers', null, meena)).json.find((x) => x._id === adam._id);
+    assert.deepEqual(row.held, { big_jar: 2 });
+    assert.equal(row.owed, 150);
+
+    const detail = (await call('GET', `/api/customers/${adam._id}`, null, meena)).json;
+    assert.deepEqual(detail.statement.map((r) => r.kind), ['collection', 'order']);
+    assert.equal(detail.statement[0].balance, 150);
+
+    const list = (await call('GET', '/api/collections?from=2026-01-11&to=2026-01-11', null, meena)).json;
+    assert.equal(list.length, 1);
+    assert.equal(list[0].collectedBy.name, 'Meena');
+    assert.ok((await call('GET', '/api/staff', null, meena)).json.every((u) => !u.passwordHash && !u.username));
+
+    assert.equal((await call('DELETE', `/api/collections/${c.json._id}`, null, meena)).status, 403);
+    assert.equal((await call('DELETE', `/api/collections/${c.json._id}`, null, boss)).status, 200);
+  });
+
+  await t.test('orders saved before a price existed are billed when the price is first set', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const nirav = (await call('POST', '/api/customers', { name: 'Nirav' }, boss)).json;
+    const o = (await call('POST', '/api/orders', { date: '2026-01-10', customer: nirav._id, qty: { small_bottle: 2 }, deliveryCharge: 5 }, boss)).json;
+    assert.equal(o.total, 5); // small bottle has no price yet
+
+    assert.equal((await call('PUT', '/api/products/small_bottle', { price: 10 }, boss)).json.rebilled, 1);
+    assert.equal((await call('GET', `/api/orders/${o._id}`, null, boss)).json.total, 25);
+
+    assert.equal((await call('PUT', '/api/products/small_bottle', { price: 15 }, boss)).json.rebilled, 0); // a price change leaves old orders alone
+    assert.equal((await call('GET', `/api/orders/${o._id}`, null, boss)).json.total, 25);
+    const log = await AuditLog.findOne({ docId: o._id, action: 'update' }).lean();
+    assert.deepEqual(log.changes['prices.small_bottle'], { from: 0, to: 10 });
+  });
+
+  await t.test('party orders bill from the party price list', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const hall = (await call('POST', '/api/customers', { name: 'Wedding Hall', category: 'party' }, boss)).json;
+    const body = { date: '2026-01-10', customer: hall._id, qty: { big_jar: 10 } };
+    const regular = (await call('POST', '/api/orders', body, boss)).json;
+    assert.equal(regular.total, 500); // regular big jar is 50
+
+    const party = (await call('POST', '/api/orders', { ...body, kind: 'party' }, boss)).json;
+    assert.equal(party.total, 0); // no party price yet
+    assert.equal((await call('PUT', '/api/products/big_jar', { partyPrice: 35 }, boss)).json.rebilled, 1);
+    assert.equal((await call('GET', `/api/orders/${party._id}`, null, boss)).json.total, 350);
+    assert.equal((await call('GET', `/api/orders/${regular._id}`, null, boss)).json.total, 500); // untouched
+
+    assert.equal((await call('PUT', `/api/orders/${regular._id}`, { kind: 'party' }, boss)).json.total, 350); // switching type re-bills
+    assert.equal((await call('POST', '/api/orders', { ...body, kind: 'vip' }, boss)).status, 400);
   });
 });

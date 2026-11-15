@@ -1,0 +1,8 @@
+{
+  "name": "UP MARKETING",
+  "short_name": "UP MARKETING",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#172a20",
+  "theme_color": "#172a20"
+}

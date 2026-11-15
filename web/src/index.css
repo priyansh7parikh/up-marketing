@@ -1,0 +1,55 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/dm-sans';
+@import '@fontsource-variable/manrope';
+
+/* Light page, dark green sidebar, lime highlight, rounded white cards. */
+@theme {
+  --font-sans: 'DM Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Manrope Variable', ui-sans-serif, system-ui, sans-serif;
+  --color-bg: #f4f6f3;
+  --color-surface: #ffffff;
+  --color-panel: #ffffff;
+  --color-line: #e2e8e1;
+  --color-line-strong: #cdd6cd;
+  --color-fg: #17211b;
+  --color-muted: #5a6960;
+  --color-faint: #86938a;
+  --color-accent: #1f5135;
+  --color-accent-strong: #173f29;
+  --color-on-accent: #ffffff;
+  --color-side: #172a20;
+  --color-side-fg: #c9d6cd;
+  --color-lime: #c7ed6b;
+  --color-ok: #2d6d45;
+  --color-ok-soft: #e7f3ea;
+  --color-warn: #8a5a0b;
+  --color-warn-soft: #fdf1dc;
+  --color-bad: #b3261e;
+  --color-bad-soft: #fde9e7;
+}
+
+html, body, #root { height: 100%; }
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .card { @apply rounded-2xl border border-line bg-panel p-5 shadow-sm; }
+  .btn { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-line-strong bg-surface px-4 text-sm font-medium text-fg transition-colors hover:border-accent hover:text-accent disabled:opacity-40; }
+  .btn-primary { @apply border-accent bg-accent font-semibold text-on-accent shadow-sm hover:border-accent-strong hover:bg-accent-strong hover:text-on-accent; }
+  .btn-danger { @apply border-bad/30 text-bad hover:border-bad hover:text-bad; }
+  .input { @apply min-h-11 w-full rounded-xl border border-line-strong bg-surface px-3 text-fg outline-none placeholder:text-faint focus:border-accent; }
+  .label { @apply mb-1.5 block text-xs font-semibold text-muted; }
+  .eyebrow { @apply text-xs font-semibold tracking-widest text-muted uppercase; }
+  .chip { @apply inline-flex items-center gap-1.5 rounded-full bg-bg px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap text-muted; }
+  .chip-ok { @apply bg-ok-soft text-ok; }
+  .chip-warn { @apply bg-warn-soft text-warn; }
+  .chip-bad { @apply bg-bad-soft text-bad; }
+  .chip-accent { @apply bg-ok-soft text-accent; }
+  .h1 { @apply font-display text-3xl tracking-tight text-fg; }
+}
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }

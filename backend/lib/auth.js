@@ -2,13 +2,14 @@ const express = require('express');
 const bcrypt = require('bcrypt');
 const { User } = require('../models');
 const { als } = require('./audit');
+const config = require('../config');
 
 const router = express.Router();
 
 // shortcut: in-memory, per process; fine for one server instance. Move to Mongo if we ever run more than one.
 const failures = new Map();
-const LIMIT = 10;
-const WINDOW_MS = 15 * 60 * 1000;
+const LIMIT = config.loginMaxAttempts;
+const WINDOW_MS = config.loginLockMinutes * 60 * 1000;
 const blocked = (k, max) => { const f = failures.get(k); return f && f.n >= max && Date.now() - f.at < WINDOW_MS; };
 const fail = (k) => {
   const f = failures.get(k);
@@ -22,7 +23,7 @@ router.post('/login', async (req, res, next) => {
     if (typeof username !== 'string' || typeof password !== 'string') return res.status(400).json({ error: 'username and password required' });
     // Two limits: per user from this IP, and per IP across all usernames (stops guessing many accounts).
     const keys = [[`${req.ip}|${username.toLowerCase()}`, LIMIT], [req.ip, LIMIT * 3]];
-    if (keys.some(([k, max]) => blocked(k, max))) return res.status(429).json({ error: 'Too many attempts, try again in 15 minutes' });
+    if (keys.some(([k, max]) => blocked(k, max))) return res.status(429).json({ error: `Too many attempts, try again in ${config.loginLockMinutes} minutes` });
 
     const user = await User.findOne({ username: username.toLowerCase(), active: true });
     // Always run bcrypt, so response time doesn't reveal whether the username exists.
@@ -66,7 +67,7 @@ function hashPassword(pw) {
 }
 
 // First boot: create the owner's admin account from env, only when there are no users at all.
-async function seedAdmin({ ADMIN_USER, ADMIN_PASSWORD, ADMIN_NAME } = process.env) {
+async function seedAdmin({ username: ADMIN_USER, password: ADMIN_PASSWORD, name: ADMIN_NAME } = config.admin) {
   if (await User.estimatedDocumentCount()) return;
   if (!ADMIN_USER || !ADMIN_PASSWORD) throw new Error('No users yet: set ADMIN_USER and ADMIN_PASSWORD to create the first admin');
   await User.create({ username: ADMIN_USER, name: ADMIN_NAME || ADMIN_USER, role: 'admin', passwordHash: await hashPassword(ADMIN_PASSWORD) });
