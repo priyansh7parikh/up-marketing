@@ -85,7 +85,7 @@ export default function Settings() {
             </Fragment>
           ))}
         </div>
-        <p className="text-xs text-muted">Each order bills from the Regular or the Party order list, whichever type the order is. Changing a price applies to new orders only. Orders made while an item had no price are billed when you first set it. Tap Selling / Off to stop giving out an item: it disappears from new orders and pheras, but customers can still return the ones they hold.</p>
+        <p className="text-xs text-muted">Each order bills from the Regular or the Party order list, whichever type the order is. Changing a price applies to new orders only. Orders made while an item had no price are billed when you first set it. Tap Selling / Off to stop giving out an item: it is greyed out under Given on new orders and pheras, but customers can still return the ones they hold.</p>
       </fieldset>
       <fieldset className="card grid gap-4 sm:grid-cols-2">
         <legend className="label px-1">Payment</legend>

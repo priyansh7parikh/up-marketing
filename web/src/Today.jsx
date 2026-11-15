@@ -135,6 +135,11 @@ export default function Today() {
         <Metric label="To collect" value={rupees(money(owing, (c) => c.owed))} hint={`From ${plural(owing.length, 'customer')}`} href="#/ughrani" />
       </div>
 
+      <div className="grid grid-cols-2 gap-3">
+        <a href="#/pending" className="btn btn-primary min-h-12"><Icon name="alert" className="h-4 w-4" /> Pending items</a>
+        <a href="#/ughrani" className="btn btn-primary min-h-12"><Icon name="rupee" className="h-4 w-4" /> Ughrani</a>
+      </div>
+
       {view === 'week' && (
         <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line lg:grid-cols-4">
           {[['Delivered', `${count(addUp(o, (x) => x.qty))} items`, vesselText(addUp(o, (x) => x.qty))], ['Returned', `${count(returned)} items`, vesselText(returned)],

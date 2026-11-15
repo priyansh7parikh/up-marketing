@@ -96,18 +96,19 @@ export const upiHref = ({ vpa, name, amount, note }) =>
   `upi://pay?${new URLSearchParams({ pa: vpa, pn: name || 'Payment', am: amount.toFixed(2), cu: 'INR', tn: note || '' })}`;
 
 // − [n] + with large tap targets; n is a whole number ≥ 0.
-export function Stepper({ label, value, onChange }) {
-  const set = (n) => onChange(Math.max(0, Math.floor(Number(n) || 0)));
+// max: a switched-off item can't go above what the entry already had (0 on a new one).
+export function Stepper({ label, value, onChange, max = Infinity }) {
+  const set = (n) => onChange(Math.min(max, Math.max(0, Math.floor(Number(n) || 0))));
   return (
-    <div className="flex items-center justify-between gap-2 rounded-xl border border-line py-1.5 pr-1.5 pl-3">
+    <div className={`flex items-center justify-between gap-2 rounded-xl border border-line py-1.5 pr-1.5 pl-3 ${max === 0 ? 'opacity-50' : ''}`}>
       <span className="text-sm">{label}</span>
       <div className="flex items-center">
-        <button type="button" className="btn w-11 px-0" aria-label={`Less ${label}`} onClick={() => set(value - 1)}>−</button>
+        <button type="button" className="btn w-11 px-0" aria-label={`Less ${label}`} disabled={!value} onClick={() => set(value - 1)}>−</button>
         <input
           className="input w-12 border-0 bg-transparent px-1 text-center font-semibold" inputMode="numeric" aria-label={label}
-          value={value || ''} placeholder="0" onChange={(e) => set(e.target.value)}
+          value={value || ''} placeholder="0" disabled={max === 0} onChange={(e) => set(e.target.value)}
         />
-        <button type="button" className="btn w-11 px-0" aria-label={`More ${label}`} onClick={() => set(value + 1)}>+</button>
+        <button type="button" className="btn w-11 px-0" aria-label={`More ${label}`} disabled={value >= max} onClick={() => set(value + 1)}>+</button>
       </div>
     </div>
   );
