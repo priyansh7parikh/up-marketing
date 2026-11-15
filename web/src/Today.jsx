@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api } from './api.js';
-import { BUSINESS, Legend, PRODUCTS, SHORT, Status, addDays, fmtDay, rupees, telHref, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
+import { BUSINESS, Icon, Legend, PRODUCTS, SHORT, Status, addDays, fmtDay, rupees, telHref, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const count = (v) => PRODUCTS.reduce((n, p) => n + (v?.[p] || 0), 0);
