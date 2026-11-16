@@ -137,7 +137,7 @@ function statement({ orders = [], collections = [], settlements = [] }) {
     ...orders.map((o) => ({ kind: 'order', doc: o, vessels: o.cancelled ? {} : vessels(o.qty, o.emptiesBack), billed: o.cancelled ? 0 : o.total || 0, paid: o.cancelled ? 0 : o.paidAmount || 0 })),
     ...collections.map((c) => ({ kind: 'collection', doc: c, vessels: c.cancelled ? {} : vessels({}, c.returned), billed: 0, paid: c.cancelled ? 0 : c.amount || 0 })),
     ...settlements.map((s) => ({ kind: 'settlement', doc: s, vessels: vessels({}, s.lost), billed: 0, paid: s.amount || 0 })),
-  ].sort((a, b) => day(a.doc.date).localeCompare(day(b.doc.date)) || String(a.doc.createdAt).localeCompare(String(b.doc.createdAt)));
+  ].sort((a, b) => day(a.doc.date).localeCompare(day(b.doc.date)) || new Date(a.doc.createdAt) - new Date(b.doc.createdAt)); // same day: in the order they were entered
 
   const held = Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
   let net = 0; // paise; negative = credit

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { day, toLines, summarize, pendingReport } = require('../lib/balances');
+const { day, toLines, summarize, pendingReport, statement } = require('../lib/balances');
 
 const sum = (docs, today) => summarize(toLines(docs), today);
 
@@ -158,4 +158,14 @@ test('an order booked for a future date is not held or owed until that day', () 
   assert.deepEqual([before.held, before.owed, before.pending], [{}, 0, false]);
   const onTheDay = sum(docs, '2026-11-20');
   assert.deepEqual([onTheDay.held.big_jar, onTheDay.owed], [10, 400]);
+});
+
+test('statement: same-day entries in the order they were entered, not by weekday name', () => {
+  // Entered Sun 15 Nov then Mon 16 Nov; as text "Mon…" sorts before "Sun…".
+  const rows = statement({
+    orders: [{ _id: 'o', date: '2026-11-15', qty: { big_jar: 3 }, total: 0, createdAt: new Date('2026-11-15T10:00:00Z') }],
+    collections: [{ _id: 'c', date: '2026-11-15', returned: { big_jar: 2 }, createdAt: new Date('2026-11-16T10:00:00Z') }],
+  });
+  assert.deepEqual(rows.map((r) => r.kind), ['order', 'collection']);
+  assert.deepEqual(rows[1].held, { big_jar: 1 });
 });

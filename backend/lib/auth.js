@@ -12,6 +12,7 @@ const LIMIT = config.loginMaxAttempts;
 const WINDOW_MS = config.loginLockMinutes * 60 * 1000;
 const blocked = (k, max) => { const f = failures.get(k); return f && f.n >= max && Date.now() - f.at < WINDOW_MS; };
 const fail = (k) => {
+  if (failures.size > 10000) for (const [key, f] of failures) if (Date.now() - f.at >= WINDOW_MS) failures.delete(key); // forget old ones
   const f = failures.get(k);
   failures.set(k, { n: (f && Date.now() - f.at < WINDOW_MS ? f.n : 0) + 1, at: Date.now() });
 };

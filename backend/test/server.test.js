@@ -289,6 +289,10 @@ test('server', async (t) => {
     // Employee starts a round, then closes it.
     const start = await call('POST', '/api/pheras', { date: '2026-01-10', team: team._id, route: ' Station Road ', startTime: '08:30', filledOut: { big_jar: 40, small_jar: 20 } }, meena);
     assert.equal(start.json.route, 'Station Road');
+    const retry = await call('POST', '/api/pheras', { key: 'phera-k1', date: '2026-01-11', team: team._id, startTime: '07:00', filledOut: { big_jar: 1 } }, meena);
+    const again = await call('POST', '/api/pheras', { key: 'phera-k1', date: '2026-01-11', team: team._id, startTime: '07:00', filledOut: { big_jar: 1 } }, meena);
+    assert.equal(again.json._id, retry.json._id); // a retried save is stored once
+    await call('DELETE', `/api/pheras/${retry.json._id}`, null, (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie);
     assert.ok((await call('GET', '/api/pheras/routes', null, meena)).json.includes('Station Road')); // suggested next time
     assert.equal(start.status, 201);
     assert.deepEqual(start.json.sold, { small_jar: 0, big_jar: 0, small_bottle: 0, big_bottle: 0 }); // still out: nothing counted as sold yet
@@ -393,6 +397,7 @@ test('server', async (t) => {
     // The only admin cannot lock themselves out.
     assert.equal((await call('PUT', `/api/users/${admin._id}`, { active: false }, boss)).status, 400);
     assert.equal((await call('PUT', `/api/users/${admin._id}`, { role: 'employee' }, boss)).status, 400);
+    assert.equal((await call('PUT', `/api/users/${admin._id}`, { active: 'false' }, boss)).status, 400); // "false" as text is still a switch-off
 
     // Settle: write off money and mark items lost, as a ledger line.
     const c = (await call('POST', '/api/customers', { name: 'Old Due', phone: '9000000077' }, meena)).json;
@@ -401,6 +406,8 @@ test('server', async (t) => {
     assert.equal((await call('POST', '/api/settlements', { customer: c._id, amount: 120, reason: 'x' }, meena)).status, 403);
     assert.equal((await call('POST', '/api/settlements', { customer: c._id, reason: 'nothing entered' }, boss)).status, 400);
     assert.equal((await call('POST', '/api/settlements', { customer: c._id, amount: 120, lost: { big_jar: 2 } }, boss)).status, 400); // reason required
+    assert.match((await call('POST', '/api/settlements', { customer: c._id, amount: 1200, reason: 'typo' }, boss)).json.error, /owe 120/); // an extra zero is refused
+    assert.match((await call('POST', '/api/settlements', { customer: c._id, lost: { big_jar: 3 }, reason: 'typo' }, boss)).json.error, /hold 2/);
     assert.equal((await call('POST', '/api/settlements', { customer: c._id, amount: 120, lost: { big_jar: 2 }, reason: 'Shop closed' }, boss)).status, 201);
     const after = (await call('GET', `/api/customers/${c._id}`, null, boss)).json;
     assert.equal(after.owed, 0);

@@ -59,10 +59,10 @@ const TABS = [
   { id: 'admin', href: '#/admin', label: 'Admin', icon: 'sliders', admin: true, more: true },
 ];
 
-function Shell({ user, onLogout, active, routeKey, showFab, children }) {
+function Shell({ user, onLogout, active, showFab, children }) {
   const tabs = TABS.filter((t) => !t.admin || user.role === 'admin');
-  // Refetched on every navigation so the badge follows new orders and returns.
-  const customers = useLoad(() => api('GET', '/customers'), [routeKey]);
+  // Refetched when the section changes (not on every form opened): it reads every customer's whole ledger.
+  const customers = useLoad(() => api('GET', '/customers'), [active]);
   const overdue = (customers.data || []).filter((c) => c.qty?.daysLate > 0).length;
   const dues = (customers.data || []).filter((c) => c.owed > 0).length;
   const counts = { pending: [overdue, 'late'], ughrani: [dues, 'to collect from'] };
@@ -202,7 +202,7 @@ export default function App() {
   const active = section === 'settings' ? 'admin' : section;
   return (
     <AppCtx.Provider value={ctx}>
-      <Shell user={user} onLogout={logout} active={active} routeKey={window.location.hash} showFab={!route.parts[1] && !['admin', 'settings', 'password', 'more'].includes(section)}>
+      <Shell user={user} onLogout={logout} active={active} showFab={!route.parts[1] && !['admin', 'settings', 'password', 'more'].includes(section)}>
         <Page {...route} />
       </Shell>
     </AppCtx.Provider>

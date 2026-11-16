@@ -114,6 +114,7 @@ const Team = mongoose.model('Team', audited(new mongoose.Schema({
 // One delivery round by one team. Route customers are prepaid (tokens), so a phera has no customers or cash.
 const Time = { type: String, match: /^([01]\d|2[0-3]):[0-5]\d$/ };
 const pheraSchema = new mongoose.Schema({
+  key: { type: String, unique: true, sparse: true }, // set by the form once; a retried save returns the first one
   date: { ...Day, required: true, index: true },
   team: { type: ObjectId, ref: 'Team', required: true, index: true },
   route: { type: String, trim: true, maxlength: 60 }, // which area this round covered, e.g. "Station Road"

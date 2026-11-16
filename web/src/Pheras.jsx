@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
-import { Field, Icon, PRODUCTS, PageHead, Status, Stepper, fmtDay, go, today, useApp, useLoad, vesselText, TooMany } from './ui.jsx';
+import { Field, Icon, newKey, PRODUCTS, PageHead, Status, Stepper, fmtDay, go, today, useApp, useLoad, vesselText, TooMany } from './ui.jsx';
 
 const zero = () => Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
 const nowTime = () => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(new Date());
@@ -121,6 +121,7 @@ export function PheraForm({ id }) {
   const [form, setForm] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [key] = useState(newKey); // once per new round: a retried save returns the first one
 
   useEffect(() => {
     if (existing.loading || form) return;
@@ -148,7 +149,7 @@ export function PheraForm({ id }) {
     setBusy(true);
     setError('');
     try {
-      if (id) await api('PUT', `/pheras/${id}`, { ...form, __v: existing.data.__v }); else await api('POST', '/pheras', form);
+      if (id) await api('PUT', `/pheras/${id}`, { ...form, __v: existing.data.__v }); else await api('POST', '/pheras', { ...form, key });
       go('/pheras');
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };

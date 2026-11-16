@@ -41,7 +41,9 @@ export function useLoad(fn, deps = []) {
   const [state, setState] = useState({ loading: true });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const reload = useCallback(() => {
-    fn().then((data) => setState({ data }), (e) => setState({ error: e.message }));
+    let live = true; // inputs changed before this answer came back: ignore it, the newer request wins
+    fn().then((data) => live && setState({ data }), (e) => live && setState({ error: e.message }));
+    return () => { live = false; };
   }, deps);
   useEffect(reload, [reload]);
   return { ...state, reload };

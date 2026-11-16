@@ -268,10 +268,10 @@ async function saveOrder(order, body) {
   await checkLink(order);
   await priceOrder(order);
   await order.save();
-  // Keep the latest address on the customer too, for reference.
+  // Keep the latest address on the customer too, for reference only: if that fails, the order is still saved.
   if (order.address) {
     const c = await Customer.findById(order.customer);
-    if (c && c.address !== order.address) { c.address = order.address; await c.save(); }
+    if (c && c.address !== order.address) { c.address = order.address; await c.save().catch((e) => console.warn(`customer address not updated: ${e.message}`)); }
   }
   return order;
 }
@@ -399,7 +399,7 @@ api.get('/pheras/:id', h(async (req, res) => {
   return p ? res.json(withSold(p)) : notFound(res);
 }));
 
-api.post('/pheras', h(async (req, res) => res.status(201).json(await savePhera(new Phera(), req.body))));
+api.post('/pheras', once(Phera, (p, req) => savePhera(p, req.body)));
 
 api.put('/pheras/:id', h(async (req, res) => {
   const p = await Phera.findById(req.params.id);
@@ -418,6 +418,11 @@ api.post('/settlements', admin, h(async (req, res) => {
   const body = pick(req.body, ['customer', 'amount', 'lost', 'reason']);
   if (!(await Customer.exists({ _id: String(body.customer) }))) return res.status(400).json({ error: 'Unknown customer' });
   if (!(body.amount > 0) && !PRODUCTS.some((p) => body.lost?.[p] > 0)) return res.status(400).json({ error: 'Enter an amount to write off or items to mark as lost' });
+  // Never more than is open: an extra zero would otherwise turn into credit for the customer.
+  const now = summarizeAll(await ledgerDocs({ customer: String(body.customer) }, { full: false }), today()).get(String(body.customer)) || { owed: 0, held: {} };
+  if (body.amount > now.owed) throw bad(`They owe ${now.owed} rupees; you can write off at most that.`);
+  const over = PRODUCTS.find((p) => (body.lost?.[p] || 0) > (now.held[p] || 0));
+  if (over) throw bad(`They hold ${now.held[over] || 0} of that item; you can mark at most that as lost.`);
   res.status(201).json(await Settlement.create({ ...body, date: today() }));
 }));
 
@@ -450,10 +455,11 @@ api.put('/users/:id', admin, h(async (req, res) => {
   if (!u) return notFound(res);
   const before = publicUser(u);
   const body = pick(req.body, ['name', 'role', 'active']);
-  const losesAdmin = u.role === 'admin' && u.active && (body.active === false || (body.role && body.role !== 'admin'));
+  u.set(body);
+  // Judged on the values Mongoose will store ("false", 0 and "no" all become false), not on what was sent.
+  const losesAdmin = before.role === 'admin' && before.active && (!u.active || u.role !== 'admin');
   if (losesAdmin && String(u._id) === req.user.id) return res.status(400).json({ error: 'You cannot remove your own admin access' });
   if (losesAdmin && (await User.countDocuments({ role: 'admin', active: true })) <= 1) return res.status(400).json({ error: 'At least one admin must stay active' });
-  u.set(body);
   if (req.body?.password) u.passwordHash = await hashPassword(req.body.password);
   await u.save();
   const changes = Object.fromEntries(Object.keys(body).filter((k) => before[k] !== u[k]).map((k) => [k, { from: before[k], to: u[k] }]));
