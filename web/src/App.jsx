@@ -73,7 +73,8 @@ function Shell({ user, onLogout, active, showFab, children }) {
   return (
     <div className="flex min-h-full flex-col lg:flex-row">
       {/* Laptop: sidebar */}
-      <aside className="side-grad hidden w-64 shrink-0 flex-col p-5 text-side-fg lg:flex">
+      {/* Stays on screen while the page scrolls, so Sign out is always visible */}
+      <aside className="side-grad hidden w-64 shrink-0 flex-col overflow-y-auto p-5 text-side-fg lg:sticky lg:top-0 lg:flex lg:h-screen lg:self-start">
         <div className="mb-8 text-white"><Logo /></div>
         <div className="mb-2 px-3 text-xs font-semibold tracking-widest text-side-fg/70 uppercase">Workspace</div>
         <nav className="flex flex-col gap-1">
