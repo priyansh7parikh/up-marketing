@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { api } from './api.js';
 
 export const AppCtx = createContext(null);
 export const useApp = () => useContext(AppCtx);
@@ -166,3 +167,16 @@ export function SearchBox({ value, onChange, placeholder = 'Search customers or 
     </label>
   );
 }
+
+// Cancel (or restore) an order or a return entered by mistake. Anyone can; it stays on record, counts for nothing, and is audited.
+export function CancelToggle({ path, cancelled, what, onDone, onError }) {
+  const toggle = async () => {
+    if (!window.confirm(cancelled ? `Restore this ${what}? It counts again.` : `Cancel this ${what}? It stays on record but counts for nothing.`)) return;
+    try { await api('PUT', path, { cancelled: !cancelled }); onDone(); } catch (e) { onError(e.message); }
+  };
+  return <button type="button" className={`btn ${cancelled ? '' : 'btn-danger'}`} onClick={toggle}>{cancelled ? `Restore ${what}` : `Cancel ${what}`}</button>;
+}
+
+export const CancelledNote = ({ what }) => (
+  <p role="status" className="rounded-2xl border border-bad/30 bg-bad-soft p-4 font-semibold text-bad">This {what} is cancelled. It is kept for the record but counts for nothing.</p>
+);

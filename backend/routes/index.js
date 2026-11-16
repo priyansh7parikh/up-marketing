@@ -66,7 +66,7 @@ api.put('/products/:key', admin, h(async (req, res) => {
   const p = await Product.findOne({ key: String(req.params.key) });
   if (!p) return notFound(res);
   const before = { price: p.price, partyPrice: p.partyPrice };
-  p.set(pick(req.body, ['name', 'nameGu', 'price', 'partyPrice', 'active']));
+  p.set(pick(req.body, ['name', 'nameGu', 'price', 'partyPrice', 'sellRegular', 'sellParty', 'sellPhera']));
   await p.save();
   // First real price: bill the orders that were saved while this vessel had no price. A later price change never touches old orders.
   let rebilled = 0;
@@ -82,6 +82,15 @@ api.put('/products/:key', admin, h(async (req, res) => {
   }
   res.json({ ...p.toObject(), rebilled });
 }));
+
+// ---- public page (no login): only what a customer may see. Party prices, UPI ID and all records stay private. ----
+const publicInfo = h(async (req, res) => {
+  const [s, list] = await Promise.all([Settings.findOne().lean(), Product.find().lean()]);
+  res.json({
+    phone: s?.phone || '', address: s?.address || '', about: s?.about || '',
+    products: PRODUCTS.map((k) => list.find((p) => p.key === k)).filter((p) => p && p.sellRegular !== false).map((p) => ({ key: p.key, name: p.name, price: p.price })),
+  });
+});
 
 // ---- settings (UPI id etc.; everyone reads, admin writes) ----
 const SETTINGS_FIELDS = ['upiVpa', 'phone', 'address', 'about'];
@@ -159,7 +168,7 @@ function dateFilter({ from, to, customer }) {
 }
 
 // ---- orders ----
-const ORDER_FIELDS = ['date', 'customer', 'kind', 'address', 'qty', 'emptiesBack', 'deliveryType', 'deliveryCharge', 'paidAmount', 'method', 'dueDate'];
+const ORDER_FIELDS = ['cancelled', 'date', 'customer', 'kind', 'address', 'qty', 'emptiesBack', 'deliveryType', 'deliveryCharge', 'paidAmount', 'method', 'dueDate'];
 
 async function priceOrder(order) {
   // Prices are fixed when the order is made; switching it between regular and party re-reads that price list.
@@ -174,15 +183,17 @@ async function priceOrder(order) {
 
 // A switched-off item can't be given out in larger numbers than before; old entries with it still save.
 const counts = (v) => Object.fromEntries(PRODUCTS.map((p) => [p, v?.[p] || 0]));
-async function checkSelling(before, after) {
-  const off = (await Product.find({ active: false }).lean()).filter((p) => (after?.[p.key] || 0) > before[p.key]);
-  if (off.length) throw Object.assign(new Error(`${off.map((p) => p.name).join(', ')} is switched off. Switch it on under Admin to give it out.`), { status: 400 });
+const SELL = { sellRegular: 'regular orders', sellParty: 'party orders', sellPhera: 'pheras' };
+async function checkSelling(before, after, field) {
+  const off = (await Product.find({ [field]: false }).lean()).filter((p) => (after?.[p.key] || 0) > before[p.key]);
+  if (off.length) throw Object.assign(new Error(`${off.map((p) => p.name).join(', ')} is switched off for ${SELL[field]}. Switch it on under Admin to give it out.`), { status: 400 });
 }
 
 async function saveOrder(order, body) {
   const before = counts(order.qty);
+  const kind = order.kind;
   order.set(pick(body, ORDER_FIELDS));
-  await checkSelling(before, order.qty);
+  await checkSelling(order.kind === kind ? before : counts(), order.qty, order.kind === 'party' ? 'sellParty' : 'sellRegular'); // switching type = a new price list
   if (order.dueDate === '') order.dueDate = undefined;
   if (order.isModified('customer') && !(await Customer.exists({ _id: order.customer }))) {
     throw Object.assign(new Error('Unknown customer'), { status: 400 });
@@ -225,7 +236,7 @@ api.delete('/orders/:id', admin, h(async (req, res) => {
 }));
 
 // ---- returns / collections (vessels back and money received after delivery) ----
-const COLLECTION_FIELDS = ['date', 'customer', 'returned', 'amount', 'method', 'collectedBy'];
+const COLLECTION_FIELDS = ['cancelled', 'date', 'customer', 'returned', 'amount', 'method', 'collectedBy'];
 const withPeople = (q) => q.populate('customer', 'name nameGu phone').populate('createdBy updatedBy collectedBy', who);
 
 async function saveCollection(c, body, user) {
@@ -285,7 +296,7 @@ const pheraPeople = (q) => q.populate('team', 'name').populate('createdBy update
 async function savePhera(p, body) {
   const before = counts(p.filledOut);
   p.set(pick(body, PHERA_FIELDS));
-  await checkSelling(before, p.filledOut);
+  await checkSelling(before, p.filledOut, 'sellPhera');
   if (p.endTime === '') p.endTime = undefined;
   if (p.isModified('team') && !(await Team.exists({ _id: p.team }))) throw Object.assign(new Error('Unknown team'), { status: 400 });
   await p.save();
@@ -396,4 +407,4 @@ api.get('/audit', admin, h(async (req, res) => {
   }));
 }));
 
-module.exports = { api, seedProducts, fixCustomerPhones };
+module.exports = { api, publicInfo, seedProducts, fixCustomerPhones };

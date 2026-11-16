@@ -7,7 +7,7 @@ const { createApp } = require('../app');
 const { requireRole, hashPassword } = require('../lib/auth');
 const { asUser, AuditLog } = require('../lib/audit');
 const { User, Order, Customer } = require('../models');
-const { api: routes, seedProducts, fixCustomerPhones } = require('../routes');
+const { api: routes, publicInfo, seedProducts, fixCustomerPhones } = require('../routes');
 
 const url = process.env.MONGO_TEST_URL || 'mongodb://127.0.0.1:27017/upmarketing_test';
 
@@ -32,7 +32,7 @@ test('server', async (t) => {
   api.get('/whoami', (req, res) => res.json(req.user));
   api.delete('/admin-thing', requireRole('admin'), (req, res) => res.json({ ok: true }));
   api.use(routes);
-  const app = createApp({ mongoUrl: url, sessionSecret: 'test-secret-'.padEnd(40, 'x'), api });
+  const app = createApp({ mongoUrl: url, sessionSecret: 'test-secret-'.padEnd(40, 'x'), api, publicInfo });
 
   const server = app.listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -235,14 +235,22 @@ test('server', async (t) => {
     const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
     const shop = (await call('POST', '/api/customers', { name: 'Corner Shop', phone: '9000000004' }, boss)).json;
     const old = (await call('POST', '/api/orders', { date: '2026-01-11', customer: shop._id, qty: { big_bottle: 2 } }, boss)).json;
-    assert.equal((await call('PUT', '/api/products/big_bottle', { active: false }, boss)).json.active, false);
+    assert.equal((await call('PUT', '/api/products/big_bottle', { sellRegular: false }, boss)).json.sellRegular, false);
 
     const fresh = await call('POST', '/api/orders', { date: '2026-01-12', customer: shop._id, qty: { big_bottle: 1 } }, boss);
     assert.equal(fresh.status, 400);
     assert.match(fresh.json.error, /switched off/);
     assert.equal((await call('PUT', `/api/orders/${old._id}`, { qty: { big_bottle: 2 }, deliveryCharge: 10 }, boss)).status, 200); // unchanged count is fine
     assert.equal((await call('PUT', `/api/orders/${old._id}`, { qty: { big_bottle: 3 } }, boss)).status, 400);
-    await call('PUT', '/api/products/big_bottle', { active: true }, boss);
+    // switched off for regular orders only: party orders and pheras still give it out
+    assert.equal((await call('POST', '/api/orders', { date: '2026-01-12', customer: shop._id, kind: 'party', qty: { big_bottle: 1 } }, boss)).status, 201);
+    assert.equal((await call('PUT', `/api/orders/${old._id}`, { kind: 'party', qty: { big_bottle: 2 } }, boss)).status, 200);
+    await call('PUT', '/api/products/big_bottle', { sellRegular: true, sellPhera: false }, boss);
+    const team = (await call('POST', '/api/teams', { name: 'Bottle Team' }, boss)).json;
+    const phera = await call('POST', '/api/pheras', { date: '2026-01-12', team: team._id, startTime: '08:00', filledOut: { big_bottle: 3 } }, boss);
+    assert.equal(phera.status, 400);
+    assert.match(phera.json.error, /switched off for pheras/);
+    await call('PUT', '/api/products/big_bottle', { sellPhera: true }, boss);
   });
 
   await t.test('pheras: teams, start and close a round, sold = out − back', async () => {
@@ -382,5 +390,45 @@ test('server', async (t) => {
     assert.ok(!JSON.stringify(log).includes('$2b$')); // no bcrypt hashes anywhere
     const onlyStaff = (await call('GET', '/api/audit?role=employee', null, boss)).json;
     assert.ok(onlyStaff.length > 0 && onlyStaff.every((l) => l.role === 'employee'));
+  });
+
+  await t.test('undoing a settlement brings the due back', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const c = (await call('GET', '/api/customers', null, boss)).json.find((x) => x.name.includes('Old Due'));
+    const s = (await call('GET', `/api/customers/${c._id}`, null, boss)).json.statement.find((r) => r.kind === 'settlement');
+    assert.equal((await call('DELETE', `/api/settlements/${s.id}`, null, boss)).status, 200);
+    assert.equal((await call('GET', `/api/customers/${c._id}`, null, boss)).json.owed, 120);
+  });
+
+  await t.test('cancel an order or a wrong return: anyone can, it stays on record and counts for nothing', async () => {
+    const meena = (await call('POST', '/api/auth/login', { username: 'meena', password: 'meena-pass-1' })).cookie;
+    const c = (await call('POST', '/api/customers', { name: 'Cancel Test', phone: '9000000009' }, meena)).json;
+    const o = (await call('POST', '/api/orders', { date: '2026-02-01', customer: c._id, qty: { big_jar: 5 } }, meena)).json;
+    const r = (await call('POST', '/api/collections', { date: '2026-02-02', customer: c._id, returned: { big_jar: 5 } }, meena)).json;
+    const now = async () => (await call('GET', `/api/customers/${c._id}`, null, meena)).json;
+    assert.equal((await now()).held.big_jar, undefined);
+
+    assert.equal((await call('PUT', `/api/collections/${r._id}`, { cancelled: true }, meena)).status, 200); // they really brought 0
+    assert.equal((await now()).held.big_jar, 5);
+    assert.equal((await call('PUT', `/api/orders/${o._id}`, { cancelled: true }, meena)).status, 200);
+    const after = await now();
+    assert.deepEqual([after.held, after.owed], [{}, 0]);
+    assert.ok(after.statement.every((row) => row.cancelled));
+    assert.equal((await call('PUT', `/api/orders/${o._id}`, { cancelled: false }, meena)).status, 200); // restore
+    assert.equal((await now()).owed, 250);
+  });
+
+  await t.test('public page: no login, only regular prices of items on sale', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    await call('PUT', '/api/settings', { phone: '9825000000', about: 'Pure water' }, boss);
+    await call('PUT', '/api/products/small_bottle', { sellRegular: false }, boss);
+    const pub = await call('GET', '/api/public');
+    assert.equal(pub.status, 200);
+    assert.equal(pub.json.phone, '9825000000');
+    assert.ok(!pub.json.products.some((p) => p.key === 'small_bottle'));
+    assert.ok(pub.json.products.every((p) => Object.keys(p).join() === 'key,name,price')); // no party price
+    assert.ok(!('upiVpa' in pub.json));
+    assert.equal((await call('GET', '/api/products')).status, 401); // the rest still needs login
+    await call('PUT', '/api/products/small_bottle', { sellRegular: true }, boss);
   });
 });

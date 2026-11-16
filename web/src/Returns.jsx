@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import { CustomerPicker } from './CustomerPicker.jsx';
 import { UpiScreen } from './Orders.jsx';
-import { Avatar, DueChip, Field, Icon, PRODUCTS, PageHead, SearchBox, Status, Stepper, addDays, fmtDay, go, isMobile, normalizePhone, rupees, today, useApp, useLoad, vesselText } from './ui.jsx';
+import { Avatar, CancelToggle, CancelledNote, DueChip, Field, Icon, PRODUCTS, PageHead, SearchBox, Status, Stepper, addDays, fmtDay, go, isMobile, normalizePhone, rupees, today, useApp, useLoad, vesselText } from './ui.jsx';
 
 const zero = () => Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
 const total = (list, pick) => list.reduce((n, c) => n + Math.round((pick(c) || 0) * 100), 0) / 100;
@@ -15,7 +15,7 @@ export function Returns() {
   const { data, ...status } = useLoad(() => api('GET', `/collections?from=${from}&to=${to}`), [from, to]);
   const needle = q.trim().toLowerCase();
   const shown = (data || []).filter((c) => !needle || [c.customer?.name, c.customer?.nameGu, c.customer?.phone, c.collectedBy?.name].some((v) => v?.toLowerCase().includes(needle)));
-  const back = Object.fromEntries(PRODUCTS.map((p) => [p, shown.reduce((n, c) => n + (c.returned?.[p] || 0), 0)]));
+  const back = Object.fromEntries(PRODUCTS.map((p) => [p, shown.reduce((n, c) => n + (c.cancelled ? 0 : c.returned?.[p] || 0), 0)]));
   const range = from === to ? (from === today() ? 'today' : `on ${fmtDay(from)}`) : `${fmtDay(from)} to ${fmtDay(to)}`;
 
   const Cell = ({ label, value, tone = '' }) => (
@@ -51,7 +51,7 @@ export function Returns() {
         {!data && <div className="p-5"><Status {...status} /></div>}
         {data && !shown.length && <p className="border-t border-line px-5 py-8 text-center text-muted">Nothing recorded {range}.</p>}
         {shown.map((c) => (
-          <a key={c._id} href={`#/returns/${c._id}`} className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-line px-5 py-4 hover:bg-bg/60 lg:grid-cols-[1.4fr_1.4fr_8rem_10rem] lg:items-center">
+          <a key={c._id} href={`#/returns/${c._id}`} className={`grid grid-cols-2 gap-x-4 gap-y-1 border-t border-line px-5 py-4 hover:bg-bg/60 lg:grid-cols-[1.4fr_1.4fr_8rem_10rem] lg:items-center ${c.cancelled ? 'opacity-60' : ''}`}>
             <span className="col-span-2 flex min-w-0 items-center gap-3 lg:col-span-1">
               <Avatar name={c.customer?.name} />
               <span className="min-w-0">
@@ -59,7 +59,7 @@ export function Returns() {
                 <span className="block truncate text-xs text-muted">{c.customer?.phone || 'no phone'} · {fmtDay(c.date)}</span>
               </span>
             </span>
-            <span className="col-span-2 font-medium lg:col-span-1">{vesselText(c.returned, names) || 'No items'}</span>
+            <span className="col-span-2 font-medium lg:col-span-1">{c.cancelled && <span className="chip chip-bad mr-2">Cancelled</span>}<span className={c.cancelled ? 'line-through' : ''}>{vesselText(c.returned, names) || 'No items'}</span></span>
             <span>{c.amount > 0 ? <span className="chip chip-ok">{rupees(c.amount)} · {c.method}</span> : <span className="chip">no money</span>}</span>
             <span className="text-right text-xs text-muted lg:text-left">collected by {c.collectedBy?.name || '—'}{c.updatedBy && ` · edited by ${c.updatedBy.name}`}</span>
           </a>
@@ -147,6 +147,7 @@ export function ReturnForm({ id, presetCustomer }) {
   return (
     <form onSubmit={submit} className="max-w-3xl space-y-4">
       <PageHead eyebrow="Collection" title={id ? 'Edit return' : 'Record a return'} sub="Jars and bottles that came back, and any money collected." />
+      {existing.data?.cancelled && <CancelledNote what="entry" />}
       {existing.data && (
         <div className="text-xs text-faint">
           added by {existing.data.createdBy?.name || 'system'}{existing.data.updatedBy && ` · edited by ${existing.data.updatedBy.name}`}
@@ -200,8 +201,11 @@ export function ReturnForm({ id, presetCustomer }) {
       {error && <p role="alert" className="text-bad">{error}</p>}
       <div className="flex flex-wrap gap-3">
         <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save return'}</button>
-        <button type="button" className="btn" onClick={() => window.history.back()}>Cancel</button>
-        {id && app.user.role === 'admin' && <button type="button" className="btn btn-danger ml-auto" onClick={remove}>Delete</button>}
+        <button type="button" className="btn" onClick={() => window.history.back()}>Back</button>
+        {id && <span className="ml-auto flex flex-wrap gap-3">
+          <CancelToggle path={`/collections/${id}`} what="entry" cancelled={existing.data?.cancelled} onError={setError} onDone={() => go(`/customers/${existing.data.customer._id}`)} />
+          {app.user.role === 'admin' && <button type="button" className="btn btn-danger" onClick={remove}>Delete</button>}
+        </span>}
       </div>
     </form>
   );

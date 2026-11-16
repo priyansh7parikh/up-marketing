@@ -8,6 +8,7 @@ import { PendingQty, Ughrani } from './Pending.jsx';
 import { PheraForm, Pheras } from './Pheras.jsx';
 import { ReturnForm, Returns } from './Returns.jsx';
 import Admin, { Password } from './Admin.jsx';
+import Public from './Public.jsx';
 
 function Logo() {
   return (
@@ -41,6 +42,7 @@ function Login({ onLogin }) {
         </Field>
         {error && <p role="alert" className="text-bad">{error}</p>}
         <button className="btn btn-primary w-full" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <a href="#/info" className="block text-center text-sm text-muted underline">Customers: prices and contact</a>
       </form>
     </main>
   );
@@ -183,13 +185,14 @@ export default function App() {
   const ctx = useMemo(() => meta && {
     user, ...meta, reloadMeta: loadMeta,
     names: Object.fromEntries(meta.products.map((p) => [p.key, p.name])),
-    selling: meta.products.filter((p) => p.active !== false).map((p) => p.key),
+    selling: Object.fromEntries([['regular', 'sellRegular'], ['party', 'sellParty'], ['phera', 'sellPhera']].map(([k, f]) => [k, meta.products.filter((p) => p[f] !== false).map((p) => p.key)])),
     prices: {
       regular: Object.fromEntries(meta.products.map((p) => [p.key, p.price])),
       party: Object.fromEntries(meta.products.map((p) => [p.key, p.partyPrice || 0])),
     },
   }, [user, meta, loadMeta]);
 
+  if (route.parts[0] === 'info') return <Public />; // open to everyone, signed in or not
   if (user === undefined) return <div className="p-4"><Status loading /></div>;
   if (!user) return <Login onLogin={setUser} />;
   if (!ctx) return <div className="p-4"><Status loading /></div>;

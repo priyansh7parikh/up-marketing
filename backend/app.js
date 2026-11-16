@@ -8,7 +8,7 @@ const auth = require('./lib/auth');
 const routes = require('./routes');
 const config = require('./config');
 
-function createApp({ mongoUrl, sessionSecret, production = false, sessionDays = 30, api = express.Router() }) {
+function createApp({ mongoUrl, sessionSecret, production = false, sessionDays = 30, api = express.Router(), publicInfo }) {
   if (!sessionSecret || sessionSecret.length < 32) throw new Error('SESSION_SECRET must be at least 32 characters (e.g. `openssl rand -hex 32`)');
   const app = express();
   app.disable('x-powered-by');
@@ -44,6 +44,7 @@ function createApp({ mongoUrl, sessionSecret, production = false, sessionDays = 
   }));
 
   app.use('/api/auth', auth.router);
+  if (publicInfo) app.get('/api/public', publicInfo); // the customer page, before the login check
   app.use('/api', auth.requireAuth);
   app.use('/api', api);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
@@ -69,7 +70,7 @@ if (require.main === module) {
     .then(() => auth.seedAdmin())
     .then(() => routes.seedProducts())
     .then(() => routes.fixCustomerPhones())
-    .then(() => createApp({ ...config, api: routes.api }).listen(config.port, () => console.log(`Up-Marketing on :${config.port}`)))
+    .then(() => createApp({ ...config, api: routes.api, publicInfo: routes.publicInfo }).listen(config.port, () => console.log(`Up-Marketing on :${config.port}`)))
     .catch((e) => { console.error(e.message); process.exit(1); });
 }
 

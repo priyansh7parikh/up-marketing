@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { api } from './api.js';
 import { CustomerPicker } from './CustomerPicker.jsx';
-import { Avatar, BUSINESS, DueChip, Field, Icon, PageHead, PRODUCTS, SearchBox, isMobile, normalizePhone, Status, Stepper, addDays, fmtDay, go, rupees, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
+import { Avatar, BUSINESS, CancelToggle, CancelledNote, DueChip, Field, Icon, PageHead, PRODUCTS, SearchBox, isMobile, normalizePhone, Status, Stepper, addDays, fmtDay, go, rupees, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
 
 // The customer's state right now (returns are counted per customer, oldest first, not per order).
 function StatusPill({ s }) {
@@ -28,7 +28,7 @@ export function OrderTable({ orders, summaries, empty = 'No orders yet.' }) {
       {orders.map((o) => {
         const due = o.total - o.paidAmount;
         return (
-          <a key={o._id} href={`#/orders/${o._id}`} className={`grid grid-cols-2 gap-x-4 gap-y-2 border-b border-line px-5 py-4 last:border-b-0 hover:bg-bg/60 lg:items-center ${COLS}`}>
+          <a key={o._id} href={`#/orders/${o._id}`} className={`grid grid-cols-2 gap-x-4 gap-y-2 border-b border-line px-5 py-4 last:border-b-0 hover:bg-bg/60 lg:items-center ${COLS} ${o.cancelled ? 'opacity-60' : ''}`}>
             <span className="col-span-2 flex min-w-0 items-center gap-3 lg:col-span-1">
               <Avatar name={o.customer?.name} />
               <span className="min-w-0">
@@ -37,10 +37,10 @@ export function OrderTable({ orders, summaries, empty = 'No orders yet.' }) {
               </span>
             </span>
             <span className="col-span-2 lg:col-span-1">
-              <span className="block font-medium">{vesselText(o.qty, names) || 'No items'} · {rupees(o.total)}</span>
+              <span className={`block font-medium ${o.cancelled ? 'line-through' : ''}`}>{vesselText(o.qty, names) || 'No items'} · {rupees(o.total)}</span>
               <span className="block text-xs text-muted">{o.kind === 'party' ? 'Party order · ' : ''}Ordered {fmtDay(o.date)}{vesselText(o.emptiesBack, names) && ` · empties back: ${vesselText(o.emptiesBack, names)}`}</span>
             </span>
-            <span>{due > 0 ? <span className="chip chip-bad">{rupees(due)} due</span> : o.total > 0 ? <span className="chip chip-ok">Paid · {o.method}</span> : <span className="chip">₹0 · no price</span>}</span>
+            <span>{o.cancelled ? <span className="chip chip-bad">Cancelled</span> : due > 0 ? <span className="chip chip-bad">{rupees(due)} due</span> : o.total > 0 ? <span className="chip chip-ok">Paid · {o.method}</span> : <span className="chip">₹0 · no price</span>}</span>
             <span className="text-right text-sm lg:text-left">{fmtDay(o.dueDate || addDays(o.date, 1))}</span>
             <span className="col-span-2 lg:col-span-1"><StatusPill s={summaries?.[o.customer?._id]} /></span>
           </a>
@@ -101,6 +101,7 @@ export function Orders() {
   const [to, setTo] = useState(today());
   const { data, ...status } = useLoad(() => api('GET', `/orders?from=${from}&to=${to}`), [from, to]);
   const customers = useLoad(() => api('GET', '/customers'));
+  const booked = useLoad(() => api('GET', `/orders?from=${addDays(today(), 1)}&to=${addDays(today(), 365)}`)); // future-dated orders
   const [q, setQ] = useState('');
   const shown = (data || []).filter(matchOrder(q));
 
@@ -108,6 +109,15 @@ export function Orders() {
     <div className="space-y-6">
       <PageHead eyebrow="Order register" title="All orders" sub="Everything sold in the dates you pick, including orders that are fully returned and paid."
         action={<a href="#/orders/new" className="btn btn-primary"><Icon name="plus" className="h-4 w-4" /> New order</a>} />
+      {booked.data?.length > 0 && (
+        <div className="card overflow-hidden p-0">
+          <div className="p-5">
+            <h2 className="font-display text-lg">Booked for later</h2>
+            <p className="text-sm text-muted">Orders dated after today. They count as given and billed from their own date.</p>
+          </div>
+          <OrderTable orders={[...booked.data].reverse()} summaries={byId(customers.data)} empty="" />
+        </div>
+      )}
       <div className="card overflow-hidden p-0">
         <div className="flex flex-wrap items-end justify-between gap-3 p-5">
           <div>
@@ -120,7 +130,7 @@ export function Orders() {
             <Field label="To"><input className="input" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} /></Field>
           </div>
         </div>
-        {data && <SalesSummary orders={shown} />}
+        {data && <SalesSummary orders={shown.filter((o) => !o.cancelled)} />}
         {!data ? <div className="p-5"><Status {...status} /></div> : <OrderTable orders={shown} summaries={byId(customers.data)} empty="No orders match." />}
       </div>
     </div>
@@ -257,6 +267,7 @@ export function OrderForm({ id, presetCustomer }) {
   return (
     <form onSubmit={submit} className="max-w-3xl space-y-4">
       <PageHead eyebrow="Customer checkout" title={id ? 'Edit order' : 'Create a new order'} sub="Record the customer, items, payment and return date." />
+      {existing.data?.cancelled && <CancelledNote what="order" />}
       {existing.data && (
         <div className="text-xs text-faint">
           added by {existing.data.createdBy?.name || 'system'}{existing.data.updatedBy && ` · edited by ${existing.data.updatedBy.name}`}
@@ -289,7 +300,7 @@ export function OrderForm({ id, presetCustomer }) {
           </div>
         )}
         <Field label="Delivery address for this order"><input className="input" autoComplete="off" placeholder="Ask the customer" value={form.address} onChange={set('address')} /></Field>
-        <Field label="Date"><input className="input" type="date" required max={today()} value={form.date} onChange={setDate} /></Field>
+        <Field label="Date"><input className="input" type="date" required value={form.date} onChange={setDate} /></Field>
       </div>
 
       <div className="card space-y-2">
@@ -304,7 +315,7 @@ export function OrderForm({ id, presetCustomer }) {
       <div className="grid gap-4 sm:grid-cols-2">
         <fieldset className="card space-y-2">
           <legend className="label px-1">Given (filled)</legend>
-          {PRODUCTS.map((p) => app.selling.includes(p)
+          {PRODUCTS.map((p) => app.selling[form.kind].includes(p)
             ? <Stepper key={p} label={`${app.names[p]} · ${rupees(prices[p])}`} value={form.qty[p]} onChange={setQty('qty', p)} />
             : <Stepper key={p} label={`${app.names[p]} · not selling`} max={existing.data?.qty?.[p] || 0} value={form.qty[p]} onChange={setQty('qty', p)} />)}
         </fieldset>
@@ -352,8 +363,11 @@ export function OrderForm({ id, presetCustomer }) {
       {error && <p role="alert" className="text-bad">{error}</p>}
       <div className="flex flex-wrap gap-3">
         <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save order'}</button>
-        <button type="button" className="btn" onClick={() => window.history.back()}>Cancel</button>
-        {id && app.user.role === 'admin' && <button type="button" className="btn btn-danger ml-auto" onClick={remove}>Delete</button>}
+        <button type="button" className="btn" onClick={() => window.history.back()}>Back</button>
+        {id && <span className="ml-auto flex flex-wrap gap-3">
+          <CancelToggle path={`/orders/${id}`} what="order" cancelled={existing.data?.cancelled} onError={setError} onDone={() => go(`/customers/${existing.data.customer._id}`)} />
+          {app.user.role === 'admin' && <button type="button" className="btn btn-danger" onClick={remove}>Delete</button>}
+        </span>}
       </div>
     </form>
   );

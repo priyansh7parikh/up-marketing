@@ -20,6 +20,7 @@ function toLines({ orders = [], collections = [], settlements = [] }) {
   const add = (date, product, kind, qty, due) => qty > 0 && lines.push({ date, product, kind, qty, due });
 
   for (const o of orders) {
+    if (o.cancelled) continue;
     const date = day(o.date);
     const due = o.dueDate ? day(o.dueDate) : addDays(date, 1);
     for (const p of PRODUCTS) {
@@ -30,6 +31,7 @@ function toLines({ orders = [], collections = [], settlements = [] }) {
     add(date, 'money', 'in', paise(o.paidAmount));
   }
   for (const c of collections) {
+    if (c.cancelled) continue;
     const date = day(c.date);
     for (const p of PRODUCTS) add(date, p, 'in', c.returned?.[p]);
     add(date, 'money', 'in', paise(c.amount));
@@ -57,7 +59,8 @@ function age(open, today) {
 // One customer's lines → what they still hold/owe and since when (as of `today`, YYYY-MM-DD).
 function summarize(lines, today) {
   // Same day: deliveries before returns, so empties handed back at the door clear older lots first.
-  const sorted = [...lines].sort((a, b) =>
+  // An order booked for a later date counts from its own date, not before.
+  const sorted = lines.filter((l) => !today || l.date <= today).sort((a, b) =>
     a.date === b.date ? (a.kind === 'out' ? 0 : 1) - (b.kind === 'out' ? 0 : 1) : a.date < b.date ? -1 : 1);
 
   const lots = {};
@@ -131,8 +134,8 @@ function statement({ orders = [], collections = [], settlements = [] }) {
     PRODUCTS.map((p) => [p, (add[p] || 0) - (sub[p] || 0)]).filter(([, n]) => n),
   );
   const rows = [
-    ...orders.map((o) => ({ kind: 'order', doc: o, vessels: vessels(o.qty, o.emptiesBack), billed: o.total || 0, paid: o.paidAmount || 0 })),
-    ...collections.map((c) => ({ kind: 'collection', doc: c, vessels: vessels({}, c.returned), billed: 0, paid: c.amount || 0 })),
+    ...orders.map((o) => ({ kind: 'order', doc: o, vessels: o.cancelled ? {} : vessels(o.qty, o.emptiesBack), billed: o.cancelled ? 0 : o.total || 0, paid: o.cancelled ? 0 : o.paidAmount || 0 })),
+    ...collections.map((c) => ({ kind: 'collection', doc: c, vessels: c.cancelled ? {} : vessels({}, c.returned), billed: 0, paid: c.cancelled ? 0 : c.amount || 0 })),
     ...settlements.map((s) => ({ kind: 'settlement', doc: s, vessels: vessels({}, s.lost), billed: 0, paid: s.amount || 0 })),
   ].sort((a, b) => day(a.doc.date).localeCompare(day(b.doc.date)) || String(a.doc.createdAt).localeCompare(String(b.doc.createdAt)));
 
@@ -143,7 +146,7 @@ function statement({ orders = [], collections = [], settlements = [] }) {
     net += paise(billed) - paise(paid);
     return {
       kind, id: doc._id, date: day(doc.date), vessels: v, billed, paid, method: doc.method, note: doc.reason || doc.address,
-      by: doc.createdBy, editedBy: doc.updatedBy,
+      by: doc.createdBy, editedBy: doc.updatedBy, cancelled: Boolean(doc.cancelled),
       held: Object.fromEntries(Object.entries(held).filter(([, n]) => n)), balance: net / 100,
     };
   });

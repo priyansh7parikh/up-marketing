@@ -82,14 +82,14 @@ export default function Today() {
   const loads = [customers, orders, collections, pheras];
   if (loads.some((l) => !l.data)) return <Status loading={loads.some((l) => l.loading)} error={loads.find((l) => l.error)?.error} />;
 
-  const inView = (x) => view === 'week' || x.date === today();
+  const inView = (x) => !x.cancelled && (view === 'week' || x.date === today());
   const [o, col, ph] = [orders.data.filter(inView), collections.data.filter(inView), pheras.data.filter(inView)];
   const list = customers.data;
   const holding = list.filter((c) => count(c.held) > 0);
   const lateOnes = list.filter((c) => c.qty.daysLate > 0);
   const owing = list.filter((c) => c.owed > 0);
   const pending = list.filter((c) => c.pending).sort((a, b) => (a.oldestDate || '9').localeCompare(b.oldestDate || '9'));
-  const unpriced = products.filter((p) => p.active !== false && (!p.price || !p.partyPrice));
+  const unpriced = products.filter((p) => (p.sellRegular !== false && !p.price) || (p.sellParty !== false && !p.partyPrice));
   const period = view === 'week' ? 'this week' : 'today';
 
   const teams = Object.values(ph.reduce((acc, p) => {
@@ -123,7 +123,7 @@ export default function Today() {
 
       {unpriced.length > 0 && (
         <a href={admin ? '#/admin' : undefined} role="alert" className="block rounded-2xl border border-bad/30 bg-bad-soft p-4 text-bad">
-          <span className="block font-bold">Some prices are not set: {unpriced.map((p) => `${p.name} (${[!p.price && 'regular', !p.partyPrice && 'party'].filter(Boolean).join(' and ')})`).join(', ')}</span>
+          <span className="block font-bold">Some prices are not set: {unpriced.map((p) => `${p.name} (${[p.sellRegular !== false && !p.price && 'regular', p.sellParty !== false && !p.partyPrice && 'party'].filter(Boolean).join(' and ')})`).join(', ')}</span>
           <span className="block text-sm">Orders bill ₹0 for these until a price is set. {admin ? 'Tap to open Admin.' : 'Ask an admin to set them.'}</span>
         </a>
       )}

@@ -121,6 +121,10 @@ export function CustomerDetail({ id }) {
 
   const vessels = vesselText(c.held, names);
   const reminder = `Hello ${c.name}, this is ${BUSINESS}. Pending: ${[vessels, c.owed > 0 && rupees(c.owed)].filter(Boolean).join(' and ') || 'nothing'}. Thank you.`;
+  const undoSettle = async (r) => {
+    if (!window.confirm('Undo this settlement? The amount and items come back as pending.')) return;
+    try { await api('DELETE', `/settlements/${r.id}`); reload(); } catch (e) { setError(e.message); }
+  };
   const remove = async () => {
     if (!window.confirm(`Delete ${c.name}?`)) return;
     try { await api('DELETE', `/customers/${id}`); go('/customers'); } catch (e) { setError(e.message); }
@@ -170,8 +174,9 @@ export function CustomerDetail({ id }) {
             <Row key={r.id} href={href}
               className="card grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl py-3 hover:border-line-strong lg:grid-cols-[5rem_8rem_1fr_6rem_6rem_7rem_9rem] lg:items-center">
               <span>{fmtDay(r.date)}</span>
-              <span className="text-right text-muted lg:text-left">{KIND[r.kind]}</span>
-              <span className="col-span-2 lg:col-span-1">{vesselText(r.vessels, names, true) || '—'}{r.note && <span className="text-muted"> · {r.note}</span>}</span>
+              <span className="text-right text-muted lg:text-left">{r.cancelled ? <span className="chip chip-bad">Cancelled {KIND[r.kind].toLowerCase()}</span> : KIND[r.kind]}</span>
+              <span className="col-span-2 lg:col-span-1">{vesselText(r.vessels, names, true) || '—'}{r.note && <span className="text-muted"> · {r.note}</span>}
+                {r.kind === 'settlement' && user.role === 'admin' && <button type="button" className="btn ml-2 min-h-8 px-3 text-xs" onClick={() => undoSettle(r)}>Undo</button>}</span>
               <span className="lg:text-right">{r.billed ? <><span className="text-faint lg:hidden">billed </span>{rupees(r.billed)}</> : ''}</span>
               <span className="text-right text-ok">{r.paid ? <><span className="text-faint lg:hidden">paid </span>{rupees(r.paid)} {r.method}</> : ''}</span>
               <span className={`lg:text-right ${r.balance > 0 ? 'text-bad' : 'text-ok'}`}>

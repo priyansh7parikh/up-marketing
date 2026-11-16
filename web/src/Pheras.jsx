@@ -189,7 +189,7 @@ export function PheraForm({ id }) {
 
       <fieldset className="card space-y-2">
         <legend className="label px-1">Filled, going out</legend>
-        <div className="grid gap-2 sm:grid-cols-2">{PRODUCTS.map((p) => <Stepper key={p} label={app.selling.includes(p) ? app.names[p] : `${app.names[p]} · not selling`} max={app.selling.includes(p) ? Infinity : existing.data?.filledOut?.[p] || 0} value={form.filledOut[p]} onChange={setQty('filledOut', p)} />)}</div>
+        <div className="grid gap-2 sm:grid-cols-2">{PRODUCTS.map((p) => <Stepper key={p} label={app.selling.phera.includes(p) ? app.names[p] : `${app.names[p]} · not selling`} max={app.selling.phera.includes(p) ? Infinity : existing.data?.filledOut?.[p] || 0} value={form.filledOut[p]} onChange={setQty('filledOut', p)} />)}</div>
       </fieldset>
 
       <div className="grid gap-4 sm:grid-cols-2">

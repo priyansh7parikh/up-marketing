@@ -49,10 +49,14 @@ const Product = mongoose.model('Product', audited(new mongoose.Schema({
   nameGu: String,
   price: { ...money, required: true }, // regular customers
   partyPrice: money, // party orders
-  active: { type: Boolean, default: true }, // switched off = no longer given out on new orders or pheras
+  // Switched off = not given out on new entries of that kind; old entries and returns are untouched.
+  sellRegular: { type: Boolean, default: true },
+  sellParty: { type: Boolean, default: true },
+  sellPhera: { type: Boolean, default: true },
 })));
 
 const Order = mongoose.model('Order', audited(new mongoose.Schema({
+  cancelled: { type: Boolean, default: false }, // customer cancelled: kept for the record, counts for nothing
   date: { ...Day, required: true, index: true },
   customer: { type: ObjectId, ref: 'Customer', required: true, index: true },
   kind: { type: String, enum: ['regular', 'party'], default: 'regular' }, // which price list it bills from
@@ -70,6 +74,7 @@ const Order = mongoose.model('Order', audited(new mongoose.Schema({
 })));
 
 const Collection = mongoose.model('Collection', audited(new mongoose.Schema({
+  cancelled: { type: Boolean, default: false }, // a wrong entry: kept for the record, counts for nothing
   date: { ...Day, required: true, index: true },
   customer: { type: ObjectId, ref: 'Customer', required: true, index: true },
   returned: { type: Vessels, default: () => ({}) },

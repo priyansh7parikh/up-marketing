@@ -151,3 +151,11 @@ test('quantity and money are aged separately', () => {
   const clear = sum({ orders: [{ date: '2026-11-10', qty: { big_jar: 1 }, emptiesBack: { big_jar: 1 }, total: 40, paidAmount: 40 }] }, '2026-11-16');
   assert.deepEqual([clear.qty.since, clear.qty.pending, clear.money.since, clear.money.pending], [null, false, null, false]);
 });
+
+test('an order booked for a future date is not held or owed until that day', () => {
+  const docs = { orders: [{ date: '2026-11-20', qty: { big_jar: 10 }, total: 400 }] };
+  const before = sum(docs, '2026-11-16');
+  assert.deepEqual([before.held, before.owed, before.pending], [{}, 0, false]);
+  const onTheDay = sum(docs, '2026-11-20');
+  assert.deepEqual([onTheDay.held.big_jar, onTheDay.owed], [10, 400]);
+});
