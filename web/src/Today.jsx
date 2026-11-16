@@ -107,13 +107,14 @@ export default function Today() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      {/* Phone: the switch always sits under the title, so it doesn't jump when the date line changes length */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="h1">{view === 'week' ? 'This week' : 'Today'}</h1>
           <p className="mt-1 text-muted">{view === 'week' ? `${fmtDay(from)} to ${fmtDay(today())}` : dateLine} · {user.name}</p>
         </div>
         {admin && (
-          <div role="radiogroup" aria-label="Report period" className="flex rounded-full border border-line bg-surface p-1">
+          <div role="radiogroup" aria-label="Report period" className="flex self-start rounded-full border border-line bg-surface p-1">
             {[['today', 'Today'], ['week', 'This week']].map(([v, label]) => (
               <button key={v} type="button" role="radio" aria-checked={view === v} onClick={() => setView(v)}
                 className={`min-h-10 rounded-full px-5 text-sm font-bold ${view === v ? 'bg-accent text-on-accent' : 'text-muted hover:text-accent'}`}>{label}</button>

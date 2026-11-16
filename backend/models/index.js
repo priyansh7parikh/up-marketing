@@ -36,10 +36,10 @@ const numbered = (name, schema) => {
 };
 
 const User = mongoose.model('User', new mongoose.Schema({
-  username: { type: String, required: true, unique: true, lowercase: true, trim: true, match: [/^[a-z0-9._-]+$/, 'Sign-in name can only have letters, numbers, dot, dash or underscore'] },
-  name: { type: String, required: true, trim: true },
+  username: { type: String, required: [true, 'Enter a sign-in name'], unique: true, lowercase: true, trim: true, match: [/^[a-z0-9._-]+$/, 'Sign-in name can only have letters, numbers, dot, dash or underscore'] },
+  name: { type: String, required: [true, 'Enter their full name'], trim: true },
   passwordHash: { type: String, required: true },
-  role: { type: String, enum: ['admin', 'employee'], required: true },
+  role: { type: String, enum: { values: ['admin', 'employee'], message: 'Role must be Admin or Staff' }, required: [true, 'Pick a role'] },
   active: { type: Boolean, default: true },
 }, { timestamps: true }));
 

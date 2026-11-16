@@ -387,6 +387,13 @@ test('server', async (t) => {
     // Staff users: admin only, no password hashes leave the server.
     assert.equal((await call('GET', '/api/users', null, meena)).status, 403);
     assert.equal((await call('POST', '/api/users', { username: 'kiran', name: 'Kiran', role: 'employee', password: 'short' }, boss)).status, 400);
+    // Plain messages for every wrong field, without Mongoose's "User validation failed: …" text.
+    const why = async (body) => (await call('POST', '/api/users', { name: 'Kiran', username: 'kiran', role: 'employee', password: 'kiran-pass-1', ...body }, boss)).json.error;
+    assert.equal(await why({ username: 'priyansh' }), 'Sign-in name "priyansh" is already taken. Pick another, like their first name.');
+    assert.equal(await why({ username: 'kiran p' }), 'Sign-in name can only have letters, numbers, dot, dash or underscore');
+    assert.equal(await why({ username: '' }), 'Enter a sign-in name');
+    assert.equal(await why({ name: '' }), 'Enter their full name');
+    assert.equal(await why({ role: 'boss' }), 'Role must be Admin or Staff');
     assert.equal((await call('POST', '/api/users', { username: 'ki ran!', name: 'Kiran', role: 'employee', password: 'kiran-pass-1' }, boss)).status, 400);
     const kiran = await call('POST', '/api/users', { username: 'Kiran', name: 'Kiran', role: 'employee', password: 'kiran-pass-1' }, boss);
     assert.equal(kiran.status, 201);
