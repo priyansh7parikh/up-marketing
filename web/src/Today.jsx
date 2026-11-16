@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { api } from './api.js';
-import { BUSINESS, Icon, Legend, go, PRODUCTS, SHORT, Status, addDays, fmtDay, rupees, telHref, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
+import { BUSINESS, addUp, Icon, Legend, go, PRODUCTS, SHORT, Status, addDays, fmtDay, rupees, telHref, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const count = (v) => PRODUCTS.reduce((n, p) => n + (v?.[p] || 0), 0);
-const addUp = (list, pick) => Object.fromEntries(PRODUCTS.map((p) => [p, list.reduce((n, x) => n + (pick(x)?.[p] || 0), 0)]));
 const money = (list, pick) => list.reduce((n, x) => n + Math.round((pick(x) || 0) * 100), 0) / 100;
 // Monday of the current week (India time), as YYYY-MM-DD.
 const weekStart = () => addDays(today(), -((new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7));

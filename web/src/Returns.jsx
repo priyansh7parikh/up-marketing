@@ -2,10 +2,8 @@ import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import { CustomerPicker } from './CustomerPicker.jsx';
 import { UpiScreen } from './Orders.jsx';
-import { Avatar, CancelToggle, newKey, CancelledNote, DueChip, Field, Icon, PRODUCTS, PageHead, SearchBox, Status, Stepper, addDays, fmtDay, go, isMobile, normalizePhone, rupees, today, useApp, useLoad, vesselText, TooMany } from './ui.jsx';
+import { Avatar, sumMoney, zero, CancelToggle, newKey, CancelledNote, DueChip, Field, Icon, PRODUCTS, PageHead, SearchBox, Status, Stepper, addDays, fmtDay, go, isMobile, normalizePhone, rupees, today, useApp, useLoad, vesselText, TooMany } from './ui.jsx';
 
-const zero = () => Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
-const total = (list, pick) => list.reduce((n, c) => n + Math.round((pick(c) || 0) * 100), 0) / 100;
 
 export function Returns() {
   const { names } = useApp();
@@ -44,8 +42,8 @@ export function Returns() {
         {data && (
           <div className="grid grid-cols-2 gap-px border-t border-line bg-line sm:grid-cols-3 lg:grid-cols-6">
             {PRODUCTS.map((p) => <Cell key={p} label={`${names[p]} back`} value={back[p]} />)}
-            <Cell label="Cash collected" value={rupees(total(shown, (c) => (c.method === 'cash' ? c.amount : 0)))} tone="text-ok" />
-            <Cell label="UPI collected" value={rupees(total(shown, (c) => (c.method === 'upi' ? c.amount : 0)))} tone="text-ok" />
+            <Cell label="Cash collected" value={rupees(sumMoney(shown, (c) => (c.method === 'cash' ? c.amount : 0)))} tone="text-ok" />
+            <Cell label="UPI collected" value={rupees(sumMoney(shown, (c) => (c.method === 'upi' ? c.amount : 0)))} tone="text-ok" />
           </div>
         )}
         <TooMany list={data} />
@@ -122,8 +120,8 @@ export function ReturnForm({ id, presetCustomer }) {
         ...(id && { __v: existing.data.__v }), // the version this form loaded: refused if someone saved since
       };
       if (showQr && !PRODUCTS.some((p) => form.returned[p])) {
-        // Money only, by UPI: nothing to save until it is received.
-        setUpi({ order: { customer: who, date: form.date }, amount, body });
+        // Money only, by UPI: nothing to save until it is received (an edit then updates this entry, not a new one).
+        setUpi({ order: { _id: id, customer: who, date: form.date }, amount, body });
         return;
       }
       const saved = id ? await api('PUT', `/collections/${id}`, body) : await api('POST', '/collections', { ...body, key });
@@ -140,7 +138,7 @@ export function ReturnForm({ id, presetCustomer }) {
   if (upi) {
     const done = () => go(`/customers/${upi.order.customer._id}`);
     const received = async () => {
-      if (upi.order._id) await api('PUT', `/collections/${upi.order._id}`, { amount: upi.amount, method: 'upi' });
+      if (upi.order._id) await api('PUT', `/collections/${upi.order._id}`, { ...upi.body, amount: upi.amount, method: 'upi' });
       else await api('POST', '/collections', { ...upi.body, amount: upi.amount, key });
       done();
     };

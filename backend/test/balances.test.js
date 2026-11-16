@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { day, toLines, summarize, pendingReport, statement } = require('../lib/balances');
+const { day, toLines, summarize, summarizeAll, statement } = require('../lib/balances');
 
 const sum = (docs, today) => summarize(toLines(docs), today);
 
@@ -83,7 +83,6 @@ test('default return date is next day: taken 15th → due 16th, late from 17th',
   assert.deepEqual([sum(docs, '2026-11-17').pending, sum(docs, '2026-11-17').overdue], [true, true]); // late
   assert.equal(sum(docs, '2026-11-16').due, '2026-11-16'); // 16th report: "due today"
   assert.equal(sum(docs, '2026-11-18').daysLate, 2);
-  assert.equal(pendingReport({ orders: [{ customer: 'adam', ...docs.orders[0] }] }, '2026-11-16').length, 1); // on the 16th report
 });
 
 test('party order with a later due date is pending but not overdue', () => {
@@ -118,8 +117,8 @@ test('extra cash becomes credit and pays the next bill', () => {
   assert.equal(r.oldestDate, '2026-11-16');
 });
 
-test('report: one row per pending customer, oldest first, cleared customers excluded', () => {
-  const rows = pendingReport({
+test('summarizeAll: one summary per customer, cleared customers not pending', () => {
+  const all = summarizeAll({
     orders: [
       { customer: 'adam', date: '2026-11-15', qty: { big_jar: 2, small_jar: 2 }, total: 200, paidAmount: 200 },
       { customer: 'john', date: '2026-11-14', qty: { big_jar: 2 }, total: 240 },
@@ -127,10 +126,28 @@ test('report: one row per pending customer, oldest first, cleared customers excl
     ],
     collections: [{ customer: 'mira', date: '2026-11-15', returned: { small_jar: 1 } }],
   }, '2026-11-16');
-  assert.deepEqual(rows.map((r) => r.customer), ['john', 'adam']);
-  assert.equal(rows[0].owed, 240);
-  assert.deepEqual(rows[1].held, { small_jar: 2, big_jar: 2 });
-  assert.equal(rows[1].owed, 0);
+  assert.deepEqual([...all].filter(([, s]) => s.pending).map(([id]) => id), ['adam', 'john']);
+  assert.equal(all.get('john').owed, 240);
+  assert.deepEqual(all.get('adam').held, { small_jar: 2, big_jar: 2 });
+  assert.equal(all.get('mira').pending, false);
+});
+
+test('statement agrees with summarize: a return entered before the same-day order', () => {
+  const docs = {
+    orders: [{ _id: 'o', date: '2026-11-15', createdAt: '2026-11-15T04:30:00Z', qty: { big_jar: 2 } }],
+    collections: [{ _id: 'c', date: '2026-11-15', createdAt: '2026-11-15T03:30:00Z', returned: { big_jar: 2 } }],
+  };
+  assert.deepEqual(sum(docs, '2026-11-16').held, {});
+  assert.deepEqual(statement(docs).at(-1).held, {});
+});
+
+test('write-off never becomes credit when the order behind it is cancelled', () => {
+  const docs = {
+    orders: [{ date: '2026-11-14', total: 500, cancelled: true }],
+    settlements: [{ date: '2026-11-15', amount: 500 }],
+  };
+  assert.deepEqual([sum(docs, '2026-11-16').owed, sum(docs, '2026-11-16').credit], [0, 0]);
+  assert.equal(statement(docs).at(-1).balance, 0);
 });
 
 test('day() uses India time for Date objects', () => {

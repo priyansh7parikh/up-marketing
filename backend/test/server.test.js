@@ -230,6 +230,7 @@ test('server', async (t) => {
     const nirav = (await call('POST', '/api/customers', { name: 'Nirav', phone: '9000000002' }, boss)).json;
     const o = (await call('POST', '/api/orders', { date: '2026-01-10', customer: nirav._id, qty: { small_bottle: 2 }, deliveryCharge: 5 }, boss)).json;
     assert.equal(o.total, 5); // small bottle has no price yet
+    const later = (await call('POST', '/api/orders', { date: '2026-01-10', customer: nirav._id, qty: {}, deliveryCharge: 5 }, boss)).json; // no bottles yet
 
     assert.equal((await call('PUT', '/api/products/small_bottle', { price: 10 }, boss)).json.rebilled, 1);
     assert.equal((await call('GET', `/api/orders/${o._id}`, null, boss)).json.total, 25);
@@ -238,6 +239,10 @@ test('server', async (t) => {
     assert.equal((await call('GET', `/api/orders/${o._id}`, null, boss)).json.total, 25);
     const log = await AuditLog.findOne({ docId: o._id, action: 'update' }).lean();
     assert.deepEqual(log.changes['prices.small_bottle'], { from: 0, to: 10 });
+
+    // Bottles added to an order made while they had no price are billed at today's price.
+    const edited = await call('PUT', `/api/orders/${later._id}`, { qty: { small_bottle: 2 }, __v: later.__v }, boss);
+    assert.equal(edited.json.total, 35, JSON.stringify(edited.json));
   });
 
   await t.test('party orders bill from the party price list', async () => {
@@ -358,6 +363,9 @@ test('server', async (t) => {
     await col.insertMany([
       { _id: dropId, name: 'PP', phone: '9409223430', createdAt: new Date('2026-01-01') },
       { _id: keepId, name: 'Udit', phone: '9409223430', createdAt: new Date('2026-01-02') },
+      { name: 'Old A', createdAt: new Date('2026-01-03') }, // from before the number was required
+      { name: 'Old B', phone: '', createdAt: new Date('2026-01-03') },
+      { name: 'Plus', phone: '+91 94092 23431', createdAt: new Date('2026-01-04') },
     ]);
     await asUser(null, () => Order.create({ date: '2026-01-10', customer: keepId, qty: { small_jar: 1 } }));
     await asUser(null, () => Order.create({ date: '2026-01-11', customer: keepId, qty: { small_jar: 1 } }));
@@ -368,6 +376,8 @@ test('server', async (t) => {
     assert.deepEqual(left.map((c) => c.name), ['Udit']);
     assert.equal(await Order.countDocuments({ customer: keepId }), 3); // nothing lost
     await assert.rejects(() => col.insertOne({ name: 'Dup', phone: '9409223430' }), /E11000/); // index is back
+    assert.equal((await Customer.findOne({ name: 'Plus' }).lean()).phone, '9409223431'); // stored clean, so lookups find it
+    await col.deleteMany({ name: mongoose.trusted({ $in: ['Old A', 'Old B', 'Plus'] }) });
   });
 
   await t.test('admin: staff users, password change, settle, edit history', async () => {

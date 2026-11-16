@@ -17,7 +17,7 @@ const paise = (rs) => Math.round((rs || 0) * 100);
 // Orders, collections and settlements → flat ledger lines {date, due?, product, kind: out|in, qty}.
 function toLines({ orders = [], collections = [], settlements = [] }) {
   const lines = [];
-  const add = (date, product, kind, qty, due) => qty > 0 && lines.push({ date, product, kind, qty, due });
+  const add = (date, product, kind, qty, due, writeOff) => qty > 0 && lines.push({ date, product, kind, qty, due, ...(writeOff && { writeOff }) });
 
   for (const o of orders) {
     if (o.cancelled) continue;
@@ -39,7 +39,7 @@ function toLines({ orders = [], collections = [], settlements = [] }) {
   for (const s of settlements) {
     const date = day(s.date);
     for (const p of PRODUCTS) add(date, p, 'in', s.lost?.[p]);
-    add(date, 'money', 'in', paise(s.amount));
+    add(date, 'money', 'in', paise(s.amount), undefined, true);
   }
   return lines;
 }
@@ -81,7 +81,8 @@ function summarize(lines, today) {
       if (!q[0].qty) q.shift();
     }
     // Extra cash is the customer's credit. Extra vessels are not ours (customers can buy their own jars), so they're ignored.
-    if (l.product === 'money') credit += left;
+    // A write-off only closes what is owed: if the order behind it is later cancelled, it never becomes credit.
+    if (l.product === 'money' && !l.writeOff) credit += left;
   }
 
   const remaining = Object.values(lots).flat();
@@ -120,14 +121,6 @@ function summarizeAll({ orders = [], collections = [], settlements = [] }, today
   return new Map([...byCustomer].map(([id, docs]) => [id, summarize(toLines(docs), today)]));
 }
 
-// Rows for the daily/weekly report: one per customer with anything pending, oldest first.
-function pendingReport(docs, today) {
-  return [...summarizeAll(docs, today)]
-    .map(([customer, s]) => ({ customer, ...s }))
-    .filter((r) => r.pending)
-    .sort((a, b) => (a.oldestDate < b.oldestDate ? -1 : a.oldestDate > b.oldestDate ? 1 : 0));
-}
-
 // One customer's history as a statement: every entry with its vessel/money effect and running balances.
 function statement({ orders = [], collections = [], settlements = [] }) {
   const vessels = (add = {}, sub = {}) => Object.fromEntries(
@@ -141,15 +134,19 @@ function statement({ orders = [], collections = [], settlements = [] }) {
 
   const held = Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
   let net = 0; // paise; negative = credit
+  let lastDay;
   return rows.map(({ kind, doc, vessels: v, billed, paid }) => {
-    for (const [p, n] of Object.entries(v)) held[p] = Math.max(0, held[p] + n); // extra returns aren't ours
-    net += paise(billed) - paise(paid);
+    // Like summarize: within a day deliveries count before returns, so extra returns are only dropped at the day's end.
+    if (day(doc.date) !== lastDay) { for (const p of PRODUCTS) held[p] = Math.max(0, held[p]); lastDay = day(doc.date); }
+    for (const [p, n] of Object.entries(v)) held[p] += n;
+    // A write-off clears at most what is owed at that point; like summarize, it never makes credit.
+    net += paise(billed) - (kind === 'settlement' ? Math.min(paise(paid), Math.max(0, net)) : paise(paid));
     return {
       kind, id: doc._id, date: day(doc.date), vessels: v, billed, paid, method: doc.method, note: doc.cancelled ? `cancelled: ${doc.cancelReason || ''}` : doc.reason || doc.address, address: doc.address,
       by: doc.createdBy, editedBy: doc.updatedBy, cancelled: Boolean(doc.cancelled), no: doc.no,
-      held: Object.fromEntries(Object.entries(held).filter(([, n]) => n)), balance: net / 100,
+      held: Object.fromEntries(Object.entries(held).filter(([, n]) => n > 0)), balance: net / 100,
     };
   });
 }
 
-module.exports = { PRODUCTS, day, addDays, toLines, summarize, summarizeAll, pendingReport, statement };
+module.exports = { PRODUCTS, day, addDays, toLines, summarize, summarizeAll, statement };

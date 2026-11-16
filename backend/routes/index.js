@@ -42,6 +42,9 @@ async function fixCustomerPhones() {
   const groups = new Map();
   for (const c of await Customer.find().sort('createdAt')) {
     const key = normalizePhone(c.phone);
+    // Raw write: an old '+91…' number is stored clean, so lookups find it and the next edit passes validation.
+    if (key !== c.phone) await Customer.collection.updateOne({ _id: c._id }, key ? { $set: { phone: key } } : { $unset: { phone: '' } });
+    if (!MOBILE.test(key)) console.warn(`Customer "${c.name}" has no valid phone number; add one under Customers.`);
     if (key) groups.set(key, [...(groups.get(key) || []), c]);
   }
   const ledgers = [Order, Collection, Settlement];
@@ -195,10 +198,14 @@ const ORDER_FIELDS = ['cancelled', 'cancelReason', 'date', 'customer', 'kind', '
 
 async function priceOrder(order) {
   // Prices are fixed when the order is made; switching it between regular and party re-reads that price list.
-  if (!order.prices || order.isModified('kind')) {
+  // An item that had no price yet (₹0) takes today's price when it is added later, as the form says.
+  const unpriced = PRODUCTS.filter((p) => order.qty?.[p] > 0 && !order.prices?.[p]);
+  if (!order.prices || order.isModified('kind') || unpriced.length) {
     const list = await Product.find().lean();
     const field = order.kind === 'party' ? 'partyPrice' : 'price';
-    order.prices = Object.fromEntries(list.map((p) => [p.key, p[field] || 0]));
+    const now = Object.fromEntries(list.map((p) => [p.key, p[field] || 0]));
+    if (!order.prices || order.isModified('kind')) order.prices = now;
+    else for (const p of unpriced) order.prices[p] = now[p] || 0;
   }
   const goods = PRODUCTS.reduce((s, p) => s + Math.round((order.qty?.[p] || 0) * (order.prices[p] || 0) * 100), 0);
   order.total = (goods + Math.round((order.deliveryCharge || 0) * 100)) / 100;

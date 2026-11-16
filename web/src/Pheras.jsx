@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
-import { Field, Icon, newKey, PRODUCTS, PageHead, Status, Stepper, fmtDay, go, today, useApp, useLoad, vesselText, TooMany } from './ui.jsx';
+import { Field, Icon, addUp, zero, newKey, PRODUCTS, PageHead, Status, Stepper, fmtDay, go, today, useApp, useLoad, vesselText, TooMany } from './ui.jsx';
 
-const zero = () => Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
 const nowTime = () => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(new Date());
-const addUp = (list, pick) => Object.fromEntries(PRODUCTS.map((p) => [p, list.reduce((n, x) => n + (pick(x)?.[p] || 0), 0)]));
 const minutes = (p) => {
   if (!p.endTime) return 0;
   const [h1, m1] = p.startTime.split(':').map(Number);

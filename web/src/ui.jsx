@@ -6,6 +6,11 @@ export const useApp = () => useContext(AppCtx);
 
 export const BUSINESS = 'UP MARKETING';
 export const PRODUCTS = ['small_jar', 'big_jar', 'small_bottle', 'big_bottle'];
+export const zero = () => Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
+// Per-item totals over a list, e.g. addUp(orders, (o) => o.qty).
+export const addUp = (list, pick) => Object.fromEntries(PRODUCTS.map((p) => [p, list.reduce((n, x) => n + (pick(x)?.[p] || 0), 0)]));
+// Rupee total over a list, summed in paise so 0.1 + 0.2 stays 0.3.
+export const sumMoney = (list, pick) => list.reduce((n, x) => n + Math.round((pick(x) || 0) * 100), 0) / 100;
 const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
 export const today = () => ymd.format(new Date());
 // The server sends at most this many entries per list (LIST_MAX in routes). At the limit, totals would be short: say so.

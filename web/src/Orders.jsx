@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { api } from './api.js';
 import { CustomerPicker } from './CustomerPicker.jsx';
-import { Avatar, BUSINESS, CancelToggle, newKey, CancelledNote, DueChip, Field, Icon, PageHead, PRODUCTS, SearchBox, isMobile, normalizePhone, Status, Stepper, addDays, fmtDay, go, rupees, today, upiHref, useApp, useLoad, vesselText, waHref, TooMany } from './ui.jsx';
+import { Avatar, addUp, sumMoney, zero, BUSINESS, CancelToggle, newKey, CancelledNote, DueChip, Field, Icon, PageHead, PRODUCTS, SearchBox, isMobile, normalizePhone, Status, Stepper, addDays, fmtDay, go, rupees, today, upiHref, useApp, useLoad, vesselText, waHref, TooMany } from './ui.jsx';
 
 // The customer's state right now (returns are counted per customer, oldest first, not per order).
 function StatusPill({ s }) {
@@ -58,8 +58,8 @@ export const matchOrder = (q) => {
 // Totals for a set of orders: everything sold in the period, whether or not it has since been returned or paid.
 function SalesSummary({ orders }) {
   const { names } = useApp();
-  const sum = (pick) => Object.fromEntries(PRODUCTS.map((p) => [p, orders.reduce((n, o) => n + (pick(o)?.[p] || 0), 0)]));
-  const money = (pick) => orders.reduce((n, o) => n + Math.round(pick(o) * 100), 0) / 100;
+  const sum = (pick) => addUp(orders, pick);
+  const money = (pick) => sumMoney(orders, pick);
   const billed = money((o) => o.total);
   const cash = money((o) => (o.method === 'cash' ? o.paidAmount : 0));
   const upi = money((o) => (o.method === 'upi' ? o.paidAmount : 0));
@@ -171,7 +171,6 @@ export function UpiScreen({ order, amount, onReceived, onLater }) {
   );
 }
 
-const zero = () => Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
 
 // Linked orders as a chain of boxes (the gterm map idea): oldest first, this one highlighted, the group total below.
 function OrderChain({ group, current, names }) {
@@ -227,8 +226,10 @@ export function OrderForm({ id, presetCustomer, addTo }) {
   if (existing.error || parent.error || customers.error) return <Status error={existing.error || parent.error || customers.error} />;
   if (!form || !customers.data) return <Status loading />;
 
-  // An old order keeps the prices it was made with, unless its type is being switched to the other list.
-  const prices = existing.data?.prices && (existing.data.kind || 'regular') === form.kind ? existing.data.prices : app.prices[form.kind];
+  // An old order keeps the prices it was made with (an item that had no price then takes today's), unless its type
+  // is being switched to the other list. Same rule as priceOrder on the server.
+  const sameKind = (existing.data?.kind || 'regular') === form.kind;
+  const prices = existing.data?.prices && sameKind ? Object.fromEntries(PRODUCTS.map((p) => [p, existing.data.prices[p] || app.prices[form.kind][p] || 0])) : app.prices[form.kind];
   const total = PRODUCTS.reduce((s, p) => s + form.qty[p] * (prices[p] || 0), 0) + Number(form.deliveryCharge || 0);
   const amount = form.amount === '' ? total : Number(form.amount);
   const wasPaid = existing.data?.paidAmount || 0;
@@ -357,7 +358,7 @@ export function OrderForm({ id, presetCustomer, addTo }) {
           <legend className="label px-1">Given (filled)</legend>
           {PRODUCTS.map((p) => app.selling[form.kind].includes(p)
             ? <Stepper key={p} label={`${app.names[p]} · ${rupees(prices[p])}`} value={form.qty[p]} onChange={setQty('qty', p)} />
-            : <Stepper key={p} label={`${app.names[p]} · not selling`} max={existing.data?.qty?.[p] || 0} value={form.qty[p]} onChange={setQty('qty', p)} />)}
+            : <Stepper key={p} label={`${app.names[p]} · not selling`} max={sameKind ? existing.data?.qty?.[p] || 0 : 0} value={form.qty[p]} onChange={setQty('qty', p)} />)}
         </fieldset>
         <fieldset className="card space-y-2">
           <legend className="label px-1">Empties taken back now</legend>

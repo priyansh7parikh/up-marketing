@@ -46,11 +46,11 @@ const User = mongoose.model('User', new mongoose.Schema({
 const Customer = mongoose.model('Customer', audited(new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   nameGu: { type: String, trim: true }, // Gujarati spelling, used for scan matching
-  phone: { type: String, required: [true, 'Phone number is required'], unique: true, set: normalizePhone, match: [MOBILE, 'Phone must be a 10-digit mobile number'] },
+  phone: { type: String, required: [true, 'Phone number is required'], set: normalizePhone, match: [MOBILE, 'Phone must be a 10-digit mobile number'] },
   address: String, // the most recent address used on an order; never suggested back to staff
   category: { type: String, enum: ['regular', 'party'], default: 'regular' },
   notes: String,
-})));
+})).index({ phone: 1 }, { unique: true, partialFilterExpression: { phone: { $type: 'string' } } })); // old customers with no number don't block the index
 
 const Product = mongoose.model('Product', audited(new mongoose.Schema({
   key: { type: String, enum: PRODUCTS, required: true, unique: true },
