@@ -1,0 +1,24 @@
+# Render Blueprint: Dashboard → New → Blueprint → pick this repo. Secrets marked sync:false are asked for once.
+services:
+  - type: web
+    name: up-marketing
+    runtime: node
+    region: singapore # closest Render region to Gujarat
+    plan: free # $7 "starter" removes the ~30-50s wake-up after 15 idle minutes
+    # --include=dev: the web build needs Vite even though NODE_ENV=production
+    buildCommand: npm ci --prefix backend && npm ci --prefix web --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGO_URL # Atlas connection string (mongodb+srv://...)
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_USER
+        value: admin
+      - key: ADMIN_NAME
+        value: Owner
+      - key: ADMIN_PASSWORD # used once, for the first admin; change it after the first sign-in
+        sync: false
