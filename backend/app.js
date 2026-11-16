@@ -67,8 +67,11 @@ function createApp({ sessionSecret, production = false, sessionDays = 30, api = 
 
   app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
     if (err.name === 'VersionError') return res.status(409).json({ error: 'Someone saved this at the same moment. Reload and try again.' });
-    if (err.name === 'ValidationError' || err.name === 'CastError') return res.status(400).json({ error: err.message });
-    if (err.code === 11000) return res.status(409).json({ error: err.keyPattern?.phone ? 'That number already belongs to another customer' : 'That name is already used' });
+    // Only the field messages ("Enter a sign-in name"), not Mongoose's "User validation failed: username: …" prefix.
+    if (err.name === 'ValidationError') return res.status(400).json({ error: Object.values(err.errors).map((e) => (e.name === 'CastError' ? `"${e.value}" is not a valid ${e.path}` : e.message)).join('. ') });
+    if (err.name === 'CastError') return res.status(400).json({ error: `"${err.value}" is not a valid ${err.path}` });
+    if (err.code === 11000) return res.status(409).json({ error: err.keyPattern?.phone ? 'That number already belongs to another customer'
+      : err.keyPattern?.username ? `Sign-in name "${err.keyValue.username}" is already taken. Pick another, like their first name.` : 'That name is already used' });
     if (err.status && err.status < 500) return res.status(err.status).json({ error: err.expose === false ? 'Bad request' : err.message });
     console.error(err);
     res.status(500).json({ error: 'Something went wrong' });
