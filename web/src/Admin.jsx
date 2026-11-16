@@ -153,7 +153,9 @@ function Export() {
         {FILES.map(([what, label, sub]) => (
           <li key={what} className="flex flex-wrap items-center justify-between gap-3 py-3">
             <span><span className="font-semibold">{label}</span> <span className="block text-sm text-muted">{sub}</span></span>
-            <a className="btn" href={`/api/export/${what}?from=${from}&to=${to}`} download>Download {label.toLowerCase()}</a>
+            {what === 'customers' ? <a className="btn" href="/api/export/customers" download>Download customers</a>
+              : from && to ? <a className="btn" href={`/api/export/${what}?from=${from}&to=${to}`} download>Download {label.toLowerCase()}</a>
+                : <span className="btn cursor-not-allowed opacity-50" aria-disabled="true" title="Pick both dates first">Download {label.toLowerCase()}</span>}
           </li>
         ))}
       </ul>

@@ -435,6 +435,23 @@ test('server', async (t) => {
     assert.equal((await call('PUT', `/api/orders/${plus2._id}`, { partOf: null }, boss)).status, 200); // unlink
     assert.equal((await call('GET', `/api/orders/${first._id}`, null, boss)).json.group.length, 2);
     assert.equal((await call('GET', '/api/orders?from=2025-05-02&to=2025-05-02', null, boss)).json[0].partOf.no, first.no); // list says "part of #N"
+    // Changing the customer of a linked order says what to do.
+    assert.match((await call('PUT', `/api/orders/${plus5._id}`, { customer: other._id }, boss)).json.error, new RegExp(`linked to order #${first.no}.*Unlink it first`));
+    // Deleting the first order: the next one becomes the first, the rest stay with it.
+    const plus6 = (await call('POST', '/api/orders', { date: '2025-05-04', customer: hall._id, qty: { big_jar: 6 }, partOf: plus5._id }, boss)).json;
+    assert.equal((await call('DELETE', `/api/orders/${first._id}`, null, boss)).status, 200);
+    const head = (await call('GET', `/api/orders/${plus5._id}`, null, boss)).json;
+    assert.equal(head.partOf, undefined);
+    assert.deepEqual(head.group.map((g) => g._id), [plus5._id, plus6._id]);
+    // Restoring an order whose group's first order is gone: it comes back on its own, not pointing at nothing.
+    await call('DELETE', `/api/orders/${plus6._id}`, null, boss);
+    await call('DELETE', `/api/orders/${plus5._id}`, null, boss);
+    const log = (await call('GET', '/api/audit', null, boss)).json.find((l) => l.action === 'delete' && l.about.startsWith(`#${plus6.no} `));
+    assert.equal((await call('POST', `/api/audit/${log._id}/restore`, null, boss)).status, 200);
+    assert.equal((await Order.findById(plus6._id).lean()).partOf, undefined);
+    // Nothing can be added to a cancelled order.
+    await call('PUT', `/api/orders/${plus6._id}`, { cancelled: true, cancelReason: 'called off' }, boss);
+    assert.match((await call('POST', '/api/orders', { date: '2025-05-05', customer: hall._id, qty: { big_jar: 1 }, partOf: plus6._id }, boss)).json.error, /is cancelled/);
   });
 
   await t.test('CSV export: admin only, opens in Excel, no formula injection', async () => {
@@ -455,6 +472,7 @@ test('server', async (t) => {
     const pay = await (await get('/api/export/payments?from=2025-06-01&to=2025-06-01', boss)).text();
     assert.match(pay, /2025-06-01,"'=HYPERLINK\(""x""\)",9825055555,Order #\d+,cash,30,/);
     assert.equal((await get('/api/export/secrets', boss)).status, 400);
+    assert.equal((await get('/api/export/customers', boss)).status, 200); // balances as of today: no dates needed
   });
 
   await t.test('undoing a settlement brings the due back', async () => {

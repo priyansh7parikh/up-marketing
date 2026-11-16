@@ -1,18 +1,18 @@
 # UP MARKETING backlog
 
-Status as of 16 Nov 2026. ✅ = built, 🟡 = partly built, ⬜ = not started, ❓ = needs your decision.
+Status as of 16 Nov 2026. ✅ = built, 🟡 = partly built, ⬜ = not started, ➖ = dropped, ❓ = needs your decision.
 
 ## Queue (in order)
 
 1. ✅ **Cancel / restore orders and returns.** Anyone can cancel; the entry is kept, struck through and counts for nothing. Edits already keep old → new values in Edit history.
 2. ✅ **Separate item switches for Pheras, Regular orders and Party orders** (your item 2). Admin → Items on sale: On/Off per item for regular orders, party orders and pheras.
-3. 🟡 **Reason on corrections.** Done for cancelling (asked, shown in the ledger and on the entry). Not yet for plain edits of old entries.
+3. ➖ **Reason on corrections.** Done for cancelling (asked, shown in the ledger and on the entry). Not yet for plain edits of old entries. Rest dropped 16 Nov: not needed.
 4. ✅ **Search everywhere.** Find box on Today; admins also match any address used on an order.
 5. ✅ **Address history.** "Addresses used" on the customer page, admin only.
 6. ✅ **"Upcoming" on Today.** "Coming up" lists orders booked for the next 7 days.
-7. 🟡 **No double entries.** Done: a double tap or a retry saves an order or return only once. Not yet: warning for the same payment twice in a day.
+7. ➖ **No double entries.** Done: a double tap or a retry saves an order or return only once. Not yet: warning for the same payment twice in a day. Rest dropped 16 Nov: not needed.
 8. ✅ **Practice day.** Played 16 Nov: admin + 2 employees, regular and party orders, 4 phera rounds, part returns, cash, overpayment, a wrong return fixed, a cancelled order, a +5 change. All 16 numbers matched. Found and fixed: a round still out was counted as sold.
-9. ⬜ **Register scan (Gujarati).** Waiting for 2–3 photos each of the order page and the return page. Every row is reviewed before saving; no customer is created from an unsure reading.
+9. ⬜ **Register scan (Gujarati).** Waiting for 2–3 photos each of the order page and the return page. Every row is reviewed before saving; no customer is created from an unsure reading. Decided 16 Nov: read pages with Claude (~₹1–2/page); no model of our own for now. Recheck after a few hundred reviewed pages: each reviewed page is a correct example a small model could later learn from.
 10. 🟡 **Go live.** Done: CSV export (item 19), Render blueprint ([render.yaml](../render.yaml)), health check, secure cookies on automatically, clean restarts, deploy steps in the README. Left: create the Atlas + Render accounts.
 11. ✅ **Logo goes home.** Tapping the UP MARKETING logo opens Today (the home page), from any screen.
 12. ✅ **Entry numbers.** Every order and return has its own number (Order #12, Return #4), shown on the lists, the edit page, the customer ledger and Edit history. Numbers are never reused, not even after a delete. Older entries were numbered once by date.
@@ -78,5 +78,5 @@ Answers to the review questions were not in the message, so these use my recomme
 | Offline entry | Online only for now |
 | Who corrects old entries | Today: everyone can edit any date (audited). Recommended: employees edit only today's and yesterday's entries; admin edits older ones. Say yes and I'll add it. |
 | Address history | Keep every address, admin can view (item 5) |
-| Register scan | Review every row before saving |
+| Register scan | Review every row before saving. Claude reads the pages; our own model only after a few hundred reviewed pages (16 Nov). |
 | Restore a delete older than the last 300 changes | Not needed: mistakes are checked within a day (16 Nov). |

@@ -13,6 +13,7 @@ const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => obj?.[k] !== u
 const today = () => day(new Date());
 // Lists stop here; the screens warn when a list is this long (pick fewer days). ~100 entries/day → 50 days.
 const LIST_MAX = 5000;
+const bad = (msg) => Object.assign(new Error(msg), { status: 400 }); // a 400 the user can act on
 const notFound = (res) => res.status(404).json({ error: 'Not found' });
 const who = 'name';
 
@@ -208,7 +209,7 @@ const counts = (v) => Object.fromEntries(PRODUCTS.map((p) => [p, v?.[p] || 0]));
 const SELL = { sellRegular: 'regular orders', sellParty: 'party orders', sellPhera: 'pheras' };
 async function checkSelling(before, after, field) {
   const off = (await Product.find({ [field]: false }).lean()).filter((p) => (after?.[p.key] || 0) > before[p.key]);
-  if (off.length) throw Object.assign(new Error(`${off.map((p) => p.name).join(', ')} is switched off for ${SELL[field]}. Switch it on under Admin to give it out.`), { status: 400 });
+  if (off.length) throw bad(`${off.map((p) => p.name).join(', ')} is switched off for ${SELL[field]}. Switch it on under Admin to give it out.`);
 }
 
 // The form sends the version (__v) it loaded. If someone saved since, refuse instead of silently undoing their change.
@@ -221,7 +222,7 @@ async function sameVersion(doc, body, what) {
 }
 
 function needReason(doc) {
-  if (doc.isModified('cancelled') && doc.cancelled && !doc.cancelReason?.trim()) throw Object.assign(new Error('Say why it is cancelled'), { status: 400 });
+  if (doc.isModified('cancelled') && doc.cancelled && !doc.cancelReason?.trim()) throw bad('Say why it is cancelled');
 }
 // The form sends a key once per entry: a double tap or a retry after the network dropped gets the first save back.
 const once = (Model, save) => h(async (req, res) => {
@@ -238,15 +239,18 @@ const once = (Model, save) => h(async (req, res) => {
 
 // Linked orders ("20 today, +5 tomorrow"): each points at the group's first order, so a group is one level deep.
 // Each stays its own entry (own date, items, payment); the link is only so people see them together.
-const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 async function checkLink(order) {
   const children = !order.isNew && (order.isModified('customer') || order.isModified('partOf')) && (await Order.exists({ partOf: order._id }));
   if (children && order.isModified('customer')) throw bad('Other orders are added to this one. Unlink them before changing the customer.');
   if (!order.partOf || !(order.isModified('partOf') || order.isModified('customer'))) return;
   if (children) throw bad('Other orders are already added to this one, so it cannot be added to another order.');
-  const parent = await Order.findById(order.partOf, 'customer partOf').lean();
+  const parent = await Order.findById(order.partOf, 'customer partOf no cancelled').lean();
   if (!parent || parent._id.equals(order._id)) throw bad('That order cannot be linked.');
-  if (!parent.customer.equals(order.customer)) throw bad('Only orders of the same customer can be linked.');
+  if (!parent.customer.equals(order.customer)) {
+    throw bad(order.isModified('partOf') ? 'Only orders of the same customer can be linked.'
+      : `This order is linked to order #${parent.no} of the other customer. Unlink it first, then change the customer.`);
+  }
+  if (parent.cancelled && order.isModified('partOf')) throw bad(`Order #${parent.no} is cancelled. Start a new order instead.`);
   order.partOf = parent.partOf || parent._id;
 }
 
@@ -259,7 +263,7 @@ async function saveOrder(order, body) {
   await checkSelling(order.kind === kind ? before : counts(), order.qty, order.kind === 'party' ? 'sellParty' : 'sellRegular'); // switching type = a new price list
   if (order.dueDate === '') order.dueDate = undefined;
   if (order.isModified('customer') && !(await Customer.exists({ _id: order.customer }))) {
-    throw Object.assign(new Error('Unknown customer'), { status: 400 });
+    throw bad('Unknown customer');
   }
   await checkLink(order);
   await priceOrder(order);
@@ -299,6 +303,13 @@ api.put('/orders/:id', h(async (req, res) => {
 api.delete('/orders/:id', admin, h(async (req, res) => {
   const o = await Order.findById(req.params.id);
   if (!o) return notFound(res);
+  // The first order of a linked group: the next oldest becomes the first, so the rest stay together.
+  const [head, ...rest] = await Order.find({ partOf: o._id }).sort('date createdAt');
+  if (head) {
+    head.partOf = undefined;
+    await head.save();
+    for (const k of rest) { k.partOf = head._id; await k.save(); }
+  }
   await o.deleteOne();
   res.json({ ok: true });
 }));
@@ -312,10 +323,10 @@ async function saveCollection(c, body, user) {
   c.set(pick(body, COLLECTION_FIELDS));
   needReason(c);
   if (!c.collectedBy) c.collectedBy = user.id;
-  if (c.isModified('customer') && !(await Customer.exists({ _id: c.customer }))) throw Object.assign(new Error('Unknown customer'), { status: 400 });
-  if (c.isModified('collectedBy') && !(await User.exists({ _id: c.collectedBy, active: true }))) throw Object.assign(new Error('Unknown staff member'), { status: 400 });
+  if (c.isModified('customer') && !(await Customer.exists({ _id: c.customer }))) throw bad('Unknown customer');
+  if (c.isModified('collectedBy') && !(await User.exists({ _id: c.collectedBy, active: true }))) throw bad('Unknown staff member');
   const anything = PRODUCTS.some((p) => c.returned?.[p]) || c.amount > 0;
-  if (!anything) throw Object.assign(new Error('Enter the items returned or money received'), { status: 400 });
+  if (!anything) throw bad('Enter the items returned or money received');
   return c.save();
 }
 
@@ -369,7 +380,7 @@ async function savePhera(p, body) {
   p.set(pick(body, PHERA_FIELDS));
   await checkSelling(before, p.filledOut, 'sellPhera');
   if (p.endTime === '') p.endTime = undefined;
-  if (p.isModified('team') && !(await Team.exists({ _id: p.team }))) throw Object.assign(new Error('Unknown team'), { status: 400 });
+  if (p.isModified('team') && !(await Team.exists({ _id: p.team }))) throw bad('Unknown team');
   await p.save();
   return withSold(p.toObject());
 }
@@ -380,7 +391,7 @@ api.get('/pheras', h(async (req, res) => {
   res.json((await pheraPeople(Phera.find(filter).sort('-date -startTime').limit(LIST_MAX)).lean()).map(withSold));
 }));
 
-// Routes used before, for the suggestions under the Route box (newest rounds first).
+// Routes used before, A to Z, for the suggestions under the Route box.
 api.get('/pheras/routes', h(async (req, res) => res.json((await Phera.distinct('route')).filter(Boolean).sort())));
 
 api.get('/pheras/:id', h(async (req, res) => {
@@ -462,7 +473,7 @@ const toCsv = (rows) => `\uFEFF${rows.map((r) => r.map(cell).join(',')).join('\r
 
 api.get('/export/:what', admin, h(async (req, res) => {
   const { what } = req.params;
-  const filter = dateFilter({ from: req.query.from, to: req.query.to });
+  const filter = what === 'customers' ? {} : dateFilter({ from: req.query.from, to: req.query.to });
   if (!filter || !['orders', 'returns', 'payments', 'customers'].includes(what)) return res.status(400).json({ error: 'Pick orders, returns, payments or customers, and dates as YYYY-MM-DD' });
   const names = Object.fromEntries((await Product.find().lean()).map((p) => [p.key, p.name]));
   const per = (label) => PRODUCTS.map((p) => `${names[p] || p} ${label}`);
@@ -538,6 +549,8 @@ api.post('/audit/:id/restore', admin, h(async (req, res) => {
   if (await M.exists({ _id: log.docId })) return res.status(409).json({ error: 'This entry is already back.' });
   if (log.snapshot.customer && !(await Customer.exists({ _id: log.snapshot.customer }))) return res.status(409).json({ error: 'Its customer was deleted too. Restore the customer first.' });
   const doc = new M(log.snapshot);
+  // Its group may have changed since: join the group's current first order, or stand alone if that order is gone.
+  if (M === Order && doc.partOf) { const p = await Order.findById(doc.partOf, 'partOf').lean(); doc.partOf = p ? p.partOf || p._id : undefined; }
   doc.$locals.restored = true;
   await doc.save();
   res.json({ ok: true });
