@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from './api.js';
-import Settings from './Settings.jsx';
-import { Field, SHORT, Status, useApp, useLoad } from './ui.jsx';
+import { Business, Items, Prices, Teams } from './Settings.jsx';
+import { Field, SHORT, Status, fmtDay, useApp, useLoad } from './ui.jsx';
 
 function Staff() {
   const { user: me } = useApp();
@@ -78,7 +78,7 @@ function Staff() {
 // "qty.big_jar" → "given 20L J", "paidAmount" → "paid".
 const FIELD = { qty: 'given', emptiesBack: 'empties back', returned: 'returned', filledOut: 'filled out', filledBack: 'filled back', lost: 'lost', prices: 'price', paidAmount: 'paid', deliveryCharge: 'delivery charge', dueDate: 'return by', partyPrice: 'party price', collectedBy: 'collected by', startTime: 'start time', endTime: 'end time', deliveryType: 'delivery', upiVpa: 'UPI ID', nameGu: 'Gujarati name', kind: 'order type' };
 const field = (path) => path.split('.').map((part) => SHORT[part] || FIELD[part] || part).join(' ');
-const show = (v) => (v === undefined || v === null || v === '' ? 'empty' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+const show = (v) => (v === undefined || v === null || v === '' ? 'empty' : typeof v === 'object' ? JSON.stringify(v) : /^\d{4}-\d{2}-\d{2}$/.test(v) ? fmtDay(v) : String(v));
 const VERB = { create: 'added', update: 'changed', delete: 'deleted' };
 
 function History() {
@@ -105,7 +105,7 @@ function History() {
             <span>
               <span className="font-semibold">{l.byName}</span>{' '}
               {l.role === 'employee' && <span className="chip chip-warn">employee</span>}{' '}
-              {VERB[l.action]} <span className="font-semibold">{l.what.toLowerCase()}</span>{l.about && <> · {l.about}</>}
+              {VERB[l.action]} <span className="font-semibold">{l.what.toLowerCase()}</span>{l.about && <> · {l.about.replace(/\d{4}-\d{2}-\d{2}/g, (d) => fmtDay(d))}</>}
             </span>
             <span className="text-xs text-muted">{when(l.at)}</span>
           </div>
@@ -120,11 +120,11 @@ function History() {
   );
 }
 
-const TABS = [['setup', 'Prices, UPI, teams'], ['staff', 'Staff'], ['history', 'Edit history']];
+const TABS = [['prices', 'Prices'], ['items', 'Items on sale'], ['business', 'UPI & customer page'], ['teams', 'Teams'], ['staff', 'Staff'], ['history', 'Edit history']];
 
 export default function Admin() {
   const { user } = useApp();
-  const [tab, setTab] = useState('setup');
+  const [tab, setTab] = useState('prices');
   if (user.role !== 'admin') return <p className="card text-muted">Admins only.</p>;
   return (
     <div className="max-w-3xl space-y-6">
@@ -134,7 +134,10 @@ export default function Admin() {
           <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`btn ${tab === id ? 'btn-primary' : ''}`}>{label}</button>
         ))}
       </div>
-      {tab === 'setup' && <Settings />}
+      {tab === 'prices' && <Prices />}
+      {tab === 'items' && <Items />}
+      {tab === 'business' && <Business />}
+      {tab === 'teams' && <Teams />}
       {tab === 'staff' && <Staff />}
       {tab === 'history' && <History />}
     </div>
