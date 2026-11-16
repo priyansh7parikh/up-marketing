@@ -9,10 +9,15 @@ export function api(method, path, body) {
 
 async function send(method, path, body) {
   if (method === 'POST' && body === undefined) body = {}; // server only accepts JSON POSTs (CSRF guard)
+  // A request that never answers (bad signal, server restarting) fails after 60s instead of leaving "Loading…" up.
+  // 60s, not less: the free server can take ~50s to wake. Saves are safe to retry (they carry a once-only key).
   const r = await fetch(`/api${path}`, {
     method,
     headers: body ? { 'content-type': 'application/json' } : {},
     body: body && JSON.stringify(body),
+    signal: AbortSignal.timeout(60000),
+  }).catch((e) => {
+    throw new Error(e.name === 'TimeoutError' ? 'The server did not answer. Check the internet and try again.' : 'Could not reach the server. Check the internet and try again.');
   });
   const json = await r.json().catch(() => null);
   if (r.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event('upm:logout'));
