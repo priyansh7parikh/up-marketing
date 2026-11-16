@@ -71,6 +71,7 @@ const Order = mongoose.model('Order', audited(numbered('Order', new mongoose.Sch
   date: { ...Day, required: true, index: true },
   customer: { type: ObjectId, ref: 'Customer', required: true, index: true },
   kind: { type: String, enum: ['regular', 'party'], default: 'regular' }, // which price list it bills from
+  partOf: { type: ObjectId, ref: 'Order', index: true }, // "+5 tomorrow": the first order of the group this one adds to
   address: { type: String, trim: true }, // where this order went; a customer's address can differ every time
   qty: { type: Vessels, default: () => ({}) },
   emptiesBack: { type: Vessels, default: () => ({}) },
@@ -115,6 +116,7 @@ const Time = { type: String, match: /^([01]\d|2[0-3]):[0-5]\d$/ };
 const pheraSchema = new mongoose.Schema({
   date: { ...Day, required: true, index: true },
   team: { type: ObjectId, ref: 'Team', required: true, index: true },
+  route: { type: String, trim: true, maxlength: 60 }, // which area this round covered, e.g. "Station Road"
   startTime: { ...Time, required: true },
   endTime: Time, // empty while the team is still out
   filledOut: { type: Vessels, default: () => ({}) },

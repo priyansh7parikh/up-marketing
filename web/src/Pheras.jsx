@@ -79,7 +79,7 @@ export function Pheras() {
                 {rounds.map((p) => (
                   <a key={p._id} href={`#/pheras/${p._id}`} className="block space-y-1 border-t border-line px-5 py-3 hover:bg-bg/60">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span><span className="font-semibold">{from !== to && `${fmtDay(p.date)} · `}Round {p.n}</span> <span className="text-sm text-muted">{p.startTime} – {p.endTime || '…'}</span></span>
+                      <span><span className="font-semibold">{from !== to && `${fmtDay(p.date)} · `}Round {p.n}{p.route && ` · ${p.route}`}</span> <span className="text-sm text-muted">{p.startTime} – {p.endTime || '…'}</span></span>
                       {p.endTime ? <span className="text-xs text-muted">{duration(minutes(p))}</span> : <span className="chip chip-warn">out now · tap to close</span>}
                     </div>
                     <table className="w-full text-sm">
@@ -116,6 +116,7 @@ export function Pheras() {
 export function PheraForm({ id }) {
   const app = useApp();
   const teams = useLoad(() => api('GET', '/teams'));
+  const routes = useLoad(() => api('GET', '/pheras/routes'));
   const existing = useLoad(() => (id ? api('GET', `/pheras/${id}`) : Promise.resolve(null)), [id]);
   const [form, setForm] = useState(null);
   const [error, setError] = useState('');
@@ -125,9 +126,9 @@ export function PheraForm({ id }) {
     if (existing.loading || form) return;
     const p = existing.data;
     setForm(p ? {
-      date: p.date, team: p.team?._id || '', startTime: p.startTime, endTime: p.endTime || '',
+      date: p.date, team: p.team?._id || '', route: p.route || '', startTime: p.startTime, endTime: p.endTime || '',
       filledOut: { ...zero(), ...p.filledOut }, filledBack: { ...zero(), ...p.filledBack }, emptiesBack: { ...zero(), ...p.emptiesBack },
-    } : { date: today(), team: '', startTime: nowTime(), endTime: '', filledOut: zero(), filledBack: zero(), emptiesBack: zero() });
+    } : { date: today(), team: '', route: '', startTime: nowTime(), endTime: '', filledOut: zero(), filledBack: zero(), emptiesBack: zero() });
   }, [existing.loading, existing.data, form]);
 
   if (existing.error || teams.error) return <Status error={existing.error || teams.error} />;
@@ -177,6 +178,10 @@ export function PheraForm({ id }) {
             <option value="">Choose…</option>
             {options.map((t) => <option key={t._id} value={t._id}>{t.name}</option>)}
           </select>
+        </Field>
+        <Field label="Route (optional)">
+          <input className="input" list="phera-routes" maxLength={60} placeholder="e.g. Station Road" value={form.route} onChange={set('route')} />
+          <datalist id="phera-routes">{(routes.data || []).map((r) => <option key={r} value={r} />)}</datalist>
         </Field>
         <Field label="Date"><input className="input" type="date" required max={today()} value={form.date} onChange={set('date')} /></Field>
         <Field label="Start time"><input className="input" type="time" required value={form.startTime} onChange={set('startTime')} /></Field>

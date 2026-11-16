@@ -38,7 +38,7 @@ export function OrderTable({ orders, summaries, empty = 'No orders yet.' }) {
             </span>
             <span className="col-span-2 lg:col-span-1">
               <span className={`block font-medium ${o.cancelled ? 'line-through' : ''}`}>{vesselText(o.qty, names) || 'No items'} · {rupees(o.total)}</span>
-              <span className="block text-xs text-muted">{o.no ? `#${o.no} · ` : ''}{o.kind === 'party' ? 'Party order · ' : ''}Ordered {fmtDay(o.date)}{vesselText(o.emptiesBack, names) && ` · empties back: ${vesselText(o.emptiesBack, names)}`}</span>
+              <span className="block text-xs text-muted">{o.no ? `#${o.no} · ` : ''}{o.partOf?.no ? `part of #${o.partOf.no} · ` : ''}{o.kind === 'party' ? 'Party order · ' : ''}Ordered {fmtDay(o.date)}{vesselText(o.emptiesBack, names) && ` · empties back: ${vesselText(o.emptiesBack, names)}`}</span>
             </span>
             <span>{o.cancelled ? <span className="chip chip-bad">Cancelled</span> : due > 0 ? <span className="chip chip-bad">{rupees(due)} due</span> : o.total > 0 ? <span className="chip chip-ok">Paid · {o.method}</span> : <span className="chip">₹0 · no price</span>}</span>
             <span className="text-right text-sm lg:text-left">{fmtDay(o.dueDate || addDays(o.date, 1))}</span>
@@ -173,10 +173,35 @@ export function UpiScreen({ order, amount, onReceived, onLater }) {
 
 const zero = () => Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
 
-export function OrderForm({ id, presetCustomer }) {
+// Linked orders as a chain of boxes (the gterm map idea): oldest first, this one highlighted, the group total below.
+function OrderChain({ group, current, names }) {
+  const live = group.filter((g) => !g.cancelled);
+  const qty = Object.fromEntries(PRODUCTS.map((p) => [p, live.reduce((n, g) => n + (g.qty?.[p] || 0), 0)]));
+  return (
+    <section className="card space-y-3" aria-label="Linked orders">
+      <h2 className="label mb-0">Linked orders · {group.length}</h2>
+      <ol className="flex flex-wrap items-center gap-y-2">
+        {group.map((g, i) => (
+          <li key={g._id || 'new'} className="flex items-center">
+            {i > 0 && <span aria-hidden="true" className="mx-1 h-0.5 w-4 bg-accent sm:w-8" />}
+            <a href={g._id && g._id !== current ? `#/orders/${g._id}` : undefined} aria-current={g._id === current ? 'page' : undefined}
+              className={`block rounded-xl border px-3 py-2 text-sm ${g._id === current ? 'border-accent bg-accent-soft' : 'border-line hover:bg-bg'} ${g.cancelled ? 'text-faint line-through' : ''}`}>
+              <span className="block font-semibold">{g.no ? `#${g.no}` : 'New'}{i === 0 ? ' · first' : ''}</span>
+              <span className="block text-xs text-muted">{fmtDay(g.date)} · {vesselText(g.qty, names) || 'no items'}</span>
+            </a>
+          </li>
+        ))}
+      </ol>
+      <p className="text-sm">Together: <span className="font-semibold">{vesselText(qty, names) || 'nothing'}</span> · {rupees(live.reduce((n, g) => n + (g.total || 0), 0))} billed</p>
+    </section>
+  );
+}
+
+export function OrderForm({ id, presetCustomer, addTo }) {
   const app = useApp();
   const customers = useLoad(() => api('GET', '/customers'));
   const existing = useLoad(() => (id ? api('GET', `/orders/${id}`) : Promise.resolve(null)), [id]);
+  const parent = useLoad(() => (addTo && !id ? api('GET', `/orders/${addTo}`) : Promise.resolve(null)), [addTo]); // "Add more to this order"
   const [form, setForm] = useState(null);
   const [error, setError] = useState('');
   const [key] = useState(newKey);
@@ -184,21 +209,22 @@ export function OrderForm({ id, presetCustomer }) {
   const [upi, setUpi] = useState(null); // { order, amount } while the QR is showing
 
   useEffect(() => {
-    if (existing.loading || !customers.data || form) return;
+    if (existing.loading || parent.loading || !customers.data || form) return;
     const o = existing.data;
-    const who = o?.customer || customers.data.find((c) => c._id === presetCustomer) || {};
-    const person = { name: who.name || '', phone: who.phone || '', address: o?.address || '', renaming: false }; // address: this order's own, never the customer's last one
+    const p = parent.data; // adding to an earlier order: same customer, type and address to start with
+    const who = o?.customer || p?.customer || customers.data.find((c) => c._id === presetCustomer) || {};
+    const person = { name: who.name || '', phone: who.phone || '', address: o?.address || p?.address || '', renaming: false }; // address: this order's own, never the customer's last one
     setForm(o ? {
       date: o.date, kind: o.kind || 'regular', ...person, qty: { ...zero(), ...o.qty }, emptiesBack: { ...zero(), ...o.emptiesBack },
       deliveryType: o.deliveryType, deliveryCharge: o.deliveryCharge || 0, dueDate: o.dueDate || addDays(o.date, 1),
       pay: o.paidAmount > 0 ? o.method : 'none', amount: o.paidAmount || '',
     } : {
-      date: today(), kind: who.category === 'party' ? 'party' : 'regular', ...person, qty: zero(), emptiesBack: zero(),
+      date: today(), kind: p?.kind || (who.category === 'party' ? 'party' : 'regular'), ...person, qty: zero(), emptiesBack: zero(),
       deliveryType: 'ours', deliveryCharge: 0, dueDate: addDays(today(), 1), pay: 'none', amount: '',
     });
-  }, [existing.loading, existing.data, customers.data, form, presetCustomer]);
+  }, [existing.loading, existing.data, parent.loading, parent.data, customers.data, form, presetCustomer]);
 
-  if (existing.error || customers.error) return <Status error={existing.error || customers.error} />;
+  if (existing.error || parent.error || customers.error) return <Status error={existing.error || parent.error || customers.error} />;
   if (!form || !customers.data) return <Status loading />;
 
   // An old order keeps the prices it was made with, unless its type is being switched to the other list.
@@ -251,11 +277,19 @@ export function OrderForm({ id, presetCustomer }) {
         paidAmount: form.pay === 'none' || showQr ? 0 : amount,
         ...(id && { __v: existing.data.__v }), // the version this form loaded: refused if someone saved since
       };
-      const saved = id ? await api('PUT', `/orders/${id}`, body) : await api('POST', '/orders', { ...body, key });
+      const saved = id ? await api('PUT', `/orders/${id}`, body) : await api('POST', '/orders', { ...body, key, ...(parent.data && { partOf: parent.data._id }) });
       if (showQr) setUpi({ order: { ...saved, customer: { _id: customer, name: match && !form.renaming ? match.name : form.name.trim(), phone } }, amount });
       else go(`/customers/${customer}`);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
+
+  const unlink = async () => {
+    if (!window.confirm('Take this order out of the linked group? Its items and payment stay as they are.')) return;
+    try { await api('PUT', `/orders/${id}`, { partOf: null }); existing.reload(); } catch (e) { setError(e.message); }
+  };
+  // The chain to show: this order's group, or (adding) the earlier order's group plus this new one.
+  const chain = existing.data?.group?.length ? existing.data.group
+    : parent.data ? [...(parent.data.group?.length ? parent.data.group : [parent.data]), { date: form.date, qty: form.qty, total }] : null;
 
   const remove = async () => {
     if (!window.confirm('Delete this order?')) return;
@@ -271,6 +305,9 @@ export function OrderForm({ id, presetCustomer }) {
     <form onSubmit={submit} className="max-w-3xl space-y-4">
       <PageHead eyebrow="Customer checkout" title={id ? `Edit order${existing.data?.no ? ` #${existing.data.no}` : ''}` : 'Create a new order'} sub="Record the customer, items, payment and return date." />
       {existing.data?.cancelled && <CancelledNote what="order" reason={existing.data.cancelReason} />}
+      {chain && <OrderChain group={chain} current={id} names={app.names} />}
+      {existing.data?.partOf && <button type="button" className="text-sm text-muted underline" onClick={unlink}>Not part of this group? Unlink this order</button>}
+      {id && !existing.data?.cancelled && <a className="btn" href={`#/orders/new?addTo=${id}`}><Icon name="plus" className="h-4 w-4" /> Add more to this order</a>}
       {existing.data && (
         <div className="text-xs text-faint">
           added by {existing.data.createdBy?.name || 'system'}{existing.data.updatedBy && ` · edited by ${existing.data.updatedBy.name}`}

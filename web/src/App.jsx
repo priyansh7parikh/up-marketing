@@ -140,7 +140,7 @@ function More() {
 function Page({ parts, query }) {
   const [section, a] = parts;
   if (section === 'orders') {
-    if (a) return <OrderForm key={a} id={a === 'new' ? null : a} presetCustomer={query.customer} />;
+    if (a) return <OrderForm key={a + (query.addTo || '')} id={a === 'new' ? null : a} presetCustomer={query.customer} addTo={query.addTo} />;
     return <Orders />;
   }
   if (section === 'returns') {

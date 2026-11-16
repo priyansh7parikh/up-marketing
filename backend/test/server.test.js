@@ -287,7 +287,9 @@ test('server', async (t) => {
     const team = (await call('POST', '/api/teams', { name: 'Team A' }, boss)).json;
 
     // Employee starts a round, then closes it.
-    const start = await call('POST', '/api/pheras', { date: '2026-01-10', team: team._id, startTime: '08:30', filledOut: { big_jar: 40, small_jar: 20 } }, meena);
+    const start = await call('POST', '/api/pheras', { date: '2026-01-10', team: team._id, route: ' Station Road ', startTime: '08:30', filledOut: { big_jar: 40, small_jar: 20 } }, meena);
+    assert.equal(start.json.route, 'Station Road');
+    assert.ok((await call('GET', '/api/pheras/routes', null, meena)).json.includes('Station Road')); // suggested next time
     assert.equal(start.status, 201);
     assert.deepEqual(start.json.sold, { small_jar: 0, big_jar: 0, small_bottle: 0, big_bottle: 0 }); // still out: nothing counted as sold yet
     const close = await call('PUT', `/api/pheras/${start.json._id}`, { endTime: '12:15', filledBack: { big_jar: 6, small_jar: 5 }, emptiesBack: { big_jar: 30 } }, meena);
@@ -416,6 +418,43 @@ test('server', async (t) => {
     assert.ok(!JSON.stringify(log).includes('$2b$')); // no bcrypt hashes anywhere
     const onlyStaff = (await call('GET', '/api/audit?role=employee', null, boss)).json;
     assert.ok(onlyStaff.length > 0 && onlyStaff.every((l) => l.role === 'employee'));
+  });
+
+  await t.test('linked orders: "+5 tomorrow" joins the first order, same customer only', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const hall = (await call('POST', '/api/customers', { name: 'Hall', phone: '9825033333' }, boss)).json;
+    const other = (await call('POST', '/api/customers', { name: 'Other', phone: '9825044444' }, boss)).json;
+    const first = (await call('POST', '/api/orders', { date: '2025-05-01', customer: hall._id, qty: { big_jar: 20 } }, boss)).json;
+    const plus5 = (await call('POST', '/api/orders', { date: '2025-05-02', customer: hall._id, qty: { big_jar: 5 }, partOf: first._id }, boss)).json;
+    const plus2 = (await call('POST', '/api/orders', { date: '2025-05-03', customer: hall._id, qty: { big_jar: 2 }, partOf: plus5._id }, boss)).json;
+    assert.equal(plus2.partOf, first._id); // added to an added order: still points at the first one
+    const group = (await call('GET', `/api/orders/${plus5._id}`, null, boss)).json.group;
+    assert.deepEqual(group.map((g) => g.qty.big_jar), [20, 5, 2]);
+    assert.equal((await call('POST', '/api/orders', { date: '2025-05-02', customer: other._id, qty: { big_jar: 1 }, partOf: first._id }, boss)).status, 400);
+    assert.equal((await call('PUT', `/api/orders/${first._id}`, { partOf: plus5._id }, boss)).status, 400); // has orders added to it
+    assert.equal((await call('PUT', `/api/orders/${plus2._id}`, { partOf: null }, boss)).status, 200); // unlink
+    assert.equal((await call('GET', `/api/orders/${first._id}`, null, boss)).json.group.length, 2);
+    assert.equal((await call('GET', '/api/orders?from=2025-05-02&to=2025-05-02', null, boss)).json[0].partOf.no, first.no); // list says "part of #N"
+  });
+
+  await t.test('CSV export: admin only, opens in Excel, no formula injection', async () => {
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    const meena = (await call('POST', '/api/auth/login', { username: 'meena', password: 'meena-pass-1' })).cookie;
+    const evil = (await call('POST', '/api/customers', { name: '=HYPERLINK("x")', phone: '9825055555' }, boss)).json;
+    await call('POST', '/api/orders', { date: '2025-06-01', customer: evil._id, qty: { big_jar: 2 }, paidAmount: 30 }, boss);
+    const get = (path, cookie) => fetch(base + path, { headers: { cookie } });
+    assert.equal((await get('/api/export/orders?from=2025-06-01&to=2025-06-01', meena)).status, 403);
+    const r = await get('/api/export/orders?from=2025-06-01&to=2025-06-01', boss);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('content-disposition'), /upmarketing-orders-2025-06-01_to_2025-06-01\.csv/);
+    const bytes = Buffer.from(await r.arrayBuffer());
+    assert.equal(bytes.subarray(0, 3).toString('hex'), 'efbbbf'); // BOM: Excel reads Gujarati correctly
+    const text = bytes.toString('utf8');
+    assert.ok(text.includes('Order no,Date,Customer'));
+    assert.ok(text.includes(`"'=HYPERLINK(""x"")"`)); // quoted, and can't run as a formula
+    const pay = await (await get('/api/export/payments?from=2025-06-01&to=2025-06-01', boss)).text();
+    assert.match(pay, /2025-06-01,"'=HYPERLINK\(""x""\)",9825055555,Order #\d+,cash,30,/);
+    assert.equal((await get('/api/export/secrets', boss)).status, 400);
   });
 
   await t.test('undoing a settlement brings the due back', async () => {

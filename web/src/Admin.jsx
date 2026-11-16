@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from './api.js';
 import { Business, Items, Prices, Teams } from './Settings.jsx';
-import { Field, SHORT, Status, fmtDay, useApp, useLoad } from './ui.jsx';
+import { Field, SHORT, Status, fmtDay, today, useApp, useLoad } from './ui.jsx';
 
 function Staff() {
   const { user: me } = useApp();
@@ -134,7 +134,34 @@ function History() {
   );
 }
 
-const TABS = [['prices', 'Prices'], ['items', 'Items on sale'], ['business', 'UPI & customer page'], ['teams', 'Teams'], ['staff', 'Staff'], ['history', 'Edit history']];
+// Downloads open in Excel or Google Sheets. Plain links: the browser sends the login cookie and saves the file.
+const FILES = [['orders', 'Orders', 'every order with items, money and who entered it'], ['returns', 'Returns', 'items and money that came back'], ['payments', 'Payments', 'every rupee received, cash and UPI'], ['customers', 'Customers', 'what each one holds and owes today (dates don\'t apply)']];
+function Export() {
+  const [from, setFrom] = useState(`${today().slice(0, 8)}01`); // this month so far
+  const [to, setTo] = useState(today());
+  return (
+    <section className="card space-y-4">
+      <div>
+        <h2 className="font-display text-lg font-bold">Export</h2>
+        <p className="text-sm text-muted">CSV files for Excel or Google Sheets: keep a copy, or share with your accountant. Cancelled entries are marked; payments leave them out.</p>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="From"><input className="input" type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} /></Field>
+        <Field label="To"><input className="input" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} /></Field>
+      </div>
+      <ul className="divide-y divide-line">
+        {FILES.map(([what, label, sub]) => (
+          <li key={what} className="flex flex-wrap items-center justify-between gap-3 py-3">
+            <span><span className="font-semibold">{label}</span> <span className="block text-sm text-muted">{sub}</span></span>
+            <a className="btn" href={`/api/export/${what}?from=${from}&to=${to}`} download>Download {label.toLowerCase()}</a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+const TABS = [['prices', 'Prices'], ['items', 'Items on sale'], ['business', 'UPI & customer page'], ['teams', 'Teams'], ['staff', 'Staff'], ['history', 'Edit history'], ['export', 'Export']];
 
 export default function Admin() {
   const { user } = useApp();
@@ -154,6 +181,7 @@ export default function Admin() {
       {tab === 'teams' && <Teams />}
       {tab === 'staff' && <Staff />}
       {tab === 'history' && <History />}
+      {tab === 'export' && <Export />}
     </div>
   );
 }

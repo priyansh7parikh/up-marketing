@@ -13,14 +13,17 @@ Status as of 16 Nov 2026. ✅ = built, 🟡 = partly built, ⬜ = not started, �
 7. 🟡 **No double entries.** Done: a double tap or a retry saves an order or return only once. Not yet: warning for the same payment twice in a day.
 8. ✅ **Practice day.** Played 16 Nov: admin + 2 employees, regular and party orders, 4 phera rounds, part returns, cash, overpayment, a wrong return fixed, a cancelled order, a +5 change. All 16 numbers matched. Found and fixed: a round still out was counted as sold.
 9. ⬜ **Register scan (Gujarati).** Waiting for 2–3 photos each of the order page and the return page. Every row is reviewed before saving; no customer is created from an unsure reading.
-10. 🟡 **Go live.** Done: Render blueprint ([render.yaml](../render.yaml)), health check, secure cookies on automatically, clean restarts, deploy steps in the README. Left: create the Atlas + Render accounts, data export (CSV) for admins.
+10. 🟡 **Go live.** Done: CSV export (item 19), Render blueprint ([render.yaml](../render.yaml)), health check, secure cookies on automatically, clean restarts, deploy steps in the README. Left: create the Atlas + Render accounts.
+11. ✅ **Logo goes home.** Tapping the UP MARKETING logo opens Today (the home page), from any screen.
+12. ✅ **Entry numbers.** Every order and return has its own number (Order #12, Return #4), shown on the lists, the edit page, the customer ledger and Edit history. Numbers are never reused, not even after a delete. Older entries were numbered once by date.
+13. ✅ **Recover a delete.** Edit history shows what a deleted entry held and has a **Restore** button (admin) that puts it back exactly: same number, items, money and who first entered it. Cancel remains the everyday "soft delete"; Delete is admin-only and now undoable too.
 14. ⬜ **Nightly backups (must have before go-live).** Atlas's free plan keeps no backups. A free scheduled job runs `mongodump` every night and keeps 30 days; one restore tested. Until then: the weekly manual backup in the README. Decide where copies live (GitHub private or Google Drive).
 15. ✅ **Two people editing the same entry.** The second save on an old copy is refused ("Amit changed this order at 10:02 while you had it open. Reload…") instead of quietly undoing the first change. Orders, returns, pheras, customers.
 16. ✅ **Long date ranges.** Lists hold up to 5000 entries (~50 days at 100 entries/day) and warn when cut short, so totals are never silently wrong.
 17. 🟡 **Speed of the customer list (Today, Pending, new order).** Done: it reads only what the math needs; 3 years of data went from 1.05 s to 0.43 s on a laptop (1 year ≈ 0.15 s). Later, only if the server log shows `slow GET /api/customers`: keep each customer's balance in memory and recompute only customers whose entries changed. Decided 16 Nov: enough for the first 6–12 months; revisit with real data.
-11. ✅ **Logo goes home.** Tapping the UP MARKETING logo opens Today (the home page), from any screen.
-12. ✅ **Entry numbers.** Every order and return has its own number (Order #12, Return #4), shown on the lists, the edit page, the customer ledger and Edit history. Numbers are never reused, not even after a delete. Older entries were numbered once by date.
-13. ✅ **Recover a delete.** Edit history shows what a deleted entry held and has a **Restore** button (admin) that puts it back exactly: same number, items, money and who first entered it. Cancel remains the everyday "soft delete"; Delete is admin-only and now undoable too.
+18. ✅ **Linked orders ("20 today, +5 tomorrow").** "Add more to this order" starts a new order for the same customer, type and address, linked to the first one. Every order in the group shows the chain (#11 first → #12) and the total together. Each stays its own entry with its own date, items and payment; Unlink takes one out. The orders list says "part of #11".
+19. ✅ **CSV export (admin).** Admin → Export: orders, returns, payments (every rupee received) and customers (what each holds and owes), for any dates. Opens in Excel / Google Sheets with Gujarati intact.
+20. ✅ **Route on pheras.** Optional route per round ("Station Road"), suggested from earlier rounds; shown as "Round 2 · Station Road".
 
 ## Review checklist (your item 1)
 
@@ -37,7 +40,7 @@ Status as of 16 Nov 2026. ✅ = built, 🟡 = partly built, ⬜ = not started, �
 - ✅ Party address per order. Future dates ("Booked for later"). Return by = date + 1, changeable.
 - ✅ Paid, part paid, unpaid; cash or UPI.
 - ✅ Add or reduce quantity by editing; old and new values are kept in Edit history (not overwritten silently).
-- ⬜ "20 today, +5 tomorrow" can be a second order for the next day (works now) or an edit; no link between the two orders. Add one only if you need it.
+- ✅ "20 today, +5 tomorrow": linked orders (item 18).
 
 ### Pheras (rounds)
 - ✅ A team can do several rounds a day; one box per team, rounds numbered in time order, totals added once.

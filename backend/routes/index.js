@@ -190,7 +190,7 @@ function dateFilter({ from, to, customer }) {
 }
 
 // ---- orders ----
-const ORDER_FIELDS = ['cancelled', 'cancelReason', 'date', 'customer', 'kind', 'address', 'qty', 'emptiesBack', 'deliveryType', 'deliveryCharge', 'paidAmount', 'method', 'dueDate'];
+const ORDER_FIELDS = ['cancelled', 'cancelReason', 'date', 'customer', 'kind', 'partOf', 'address', 'qty', 'emptiesBack', 'deliveryType', 'deliveryCharge', 'paidAmount', 'method', 'dueDate'];
 
 async function priceOrder(order) {
   // Prices are fixed when the order is made; switching it between regular and party re-reads that price list.
@@ -236,6 +236,20 @@ const once = (Model, save) => h(async (req, res) => {
   }
 });
 
+// Linked orders ("20 today, +5 tomorrow"): each points at the group's first order, so a group is one level deep.
+// Each stays its own entry (own date, items, payment); the link is only so people see them together.
+const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
+async function checkLink(order) {
+  const children = !order.isNew && (order.isModified('customer') || order.isModified('partOf')) && (await Order.exists({ partOf: order._id }));
+  if (children && order.isModified('customer')) throw bad('Other orders are added to this one. Unlink them before changing the customer.');
+  if (!order.partOf || !(order.isModified('partOf') || order.isModified('customer'))) return;
+  if (children) throw bad('Other orders are already added to this one, so it cannot be added to another order.');
+  const parent = await Order.findById(order.partOf, 'customer partOf').lean();
+  if (!parent || parent._id.equals(order._id)) throw bad('That order cannot be linked.');
+  if (!parent.customer.equals(order.customer)) throw bad('Only orders of the same customer can be linked.');
+  order.partOf = parent.partOf || parent._id;
+}
+
 async function saveOrder(order, body) {
   await sameVersion(order, body, 'order');
   const before = counts(order.qty);
@@ -247,6 +261,7 @@ async function saveOrder(order, body) {
   if (order.isModified('customer') && !(await Customer.exists({ _id: order.customer }))) {
     throw Object.assign(new Error('Unknown customer'), { status: 400 });
   }
+  await checkLink(order);
   await priceOrder(order);
   await order.save();
   // Keep the latest address on the customer too, for reference.
@@ -261,13 +276,17 @@ api.get('/orders', h(async (req, res) => {
   const filter = dateFilter(req.query);
   if (!filter) return res.status(400).json({ error: 'from/to must be YYYY-MM-DD' });
   const q = Order.find(filter).sort('-date -createdAt').limit(LIST_MAX)
-    .populate('customer', 'name nameGu phone').populate('createdBy updatedBy', who);
+    .populate('customer', 'name nameGu phone').populate('partOf', 'no').populate('createdBy updatedBy', who);
   res.json(await q.lean());
 }));
 
 api.get('/orders/:id', h(async (req, res) => {
   const o = await Order.findById(req.params.id).populate('customer', 'name nameGu phone').populate('createdBy updatedBy', who).lean();
-  return o ? res.json(o) : notFound(res);
+  if (!o) return notFound(res);
+  // The whole group this order belongs to, oldest first, for the linked-orders chain.
+  const root = o.partOf || o._id;
+  const group = await Order.find(mongoose.trusted({ $or: [{ _id: root }, { partOf: root }] }), 'no date qty total paidAmount cancelled partOf').sort('date createdAt').lean();
+  res.json({ ...o, group: group.length > 1 ? group : [] });
 }));
 
 api.post('/orders', once(Order, (o, req) => saveOrder(o, req.body)));
@@ -339,7 +358,7 @@ api.put('/teams/:id', admin, h(async (req, res) => {
 }));
 
 // ---- pheras (delivery rounds) ----
-const PHERA_FIELDS = ['date', 'team', 'startTime', 'endTime', 'filledOut', 'filledBack', 'emptiesBack'];
+const PHERA_FIELDS = ['date', 'team', 'route', 'startTime', 'endTime', 'filledOut', 'filledBack', 'emptiesBack'];
 // sold = filled out − filled back, once the round is closed (still out = not known yet). Computed, never stored.
 const withSold = (p) => ({ ...p, sold: Object.fromEntries(PRODUCTS.map((k) => [k, p.endTime ? (p.filledOut?.[k] || 0) - (p.filledBack?.[k] || 0) : 0])) });
 const pheraPeople = (q) => q.populate('team', 'name').populate('createdBy updatedBy', who);
@@ -360,6 +379,9 @@ api.get('/pheras', h(async (req, res) => {
   if (!filter) return res.status(400).json({ error: 'from/to must be YYYY-MM-DD' });
   res.json((await pheraPeople(Phera.find(filter).sort('-date -startTime').limit(LIST_MAX)).lean()).map(withSold));
 }));
+
+// Routes used before, for the suggestions under the Route box (newest rounds first).
+api.get('/pheras/routes', h(async (req, res) => res.json((await Phera.distinct('route')).filter(Boolean).sort())));
 
 api.get('/pheras/:id', h(async (req, res) => {
   const p = await pheraPeople(Phera.findById(req.params.id)).lean();
@@ -427,6 +449,49 @@ api.put('/users/:id', admin, h(async (req, res) => {
   if (req.body?.password) changes.password = { from: '•••', to: 'reset' };
   if (Object.keys(changes).length) await logUser(req, 'update', u, changes);
   res.json(publicUser(u));
+}));
+
+// ---- export (admin): CSV files that open in Excel / Google Sheets ----
+// Excel reads UTF-8 (Gujarati) only with a BOM. Text starting with = + - @ would run as a formula there, so it gets a '.
+const cell = (v) => {
+  let s = v === undefined || v === null ? '' : String(v);
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+const toCsv = (rows) => `\uFEFF${rows.map((r) => r.map(cell).join(',')).join('\r\n')}\r\n`;
+
+api.get('/export/:what', admin, h(async (req, res) => {
+  const { what } = req.params;
+  const filter = dateFilter({ from: req.query.from, to: req.query.to });
+  if (!filter || !['orders', 'returns', 'payments', 'customers'].includes(what)) return res.status(400).json({ error: 'Pick orders, returns, payments or customers, and dates as YYYY-MM-DD' });
+  const names = Object.fromEntries((await Product.find().lean()).map((p) => [p.key, p.name]));
+  const per = (label) => PRODUCTS.map((p) => `${names[p] || p} ${label}`);
+  const n = (v, p) => v?.[p] || 0;
+  const person = (d) => [d.customer?.name, d.customer?.phone];
+  let rows;
+  if (what === 'customers') { // balances as of today; dates don't apply
+    const [customers, docs] = await Promise.all([Customer.find().sort('name').lean(), ledgerDocs({}, { full: false })]);
+    const sums = summarizeAll(docs, today());
+    rows = [['Name', 'Gujarati name', 'Phone', 'Address', 'Type', ...per('held'), 'Owes (₹)', 'Credit (₹)', 'Oldest pending since'],
+      ...customers.map((c) => { const s = sums.get(String(c._id)) || {}; return [c.name, c.nameGu, c.phone, c.address, c.category, ...PRODUCTS.map((p) => n(s.held, p)), s.owed || 0, s.credit || 0, s.oldestDate]; })];
+  } else {
+    const people = (q, staff) => q.populate('customer', 'name phone').populate(staff, who).sort('date createdAt').lean();
+    const [orders, cols] = await Promise.all([what === 'returns' ? [] : people(Order.find(filter).populate('partOf', 'no'), 'createdBy updatedBy'), what === 'orders' ? [] : people(Collection.find(filter), 'createdBy updatedBy collectedBy')]);
+    if (what === 'orders') {
+      rows = [['Order no', 'Date', 'Customer', 'Phone', 'Type', 'Part of order', 'Address', ...per('given'), ...per('empties back'), 'Delivery charge', 'Total (₹)', 'Paid (₹)', 'Method', 'Return by', 'Cancelled', 'Cancel reason', 'Entered by', 'Edited by'],
+        ...orders.map((o) => [o.no, o.date, ...person(o), o.kind, o.partOf?.no, o.address, ...PRODUCTS.map((p) => n(o.qty, p)), ...PRODUCTS.map((p) => n(o.emptiesBack, p)), o.deliveryCharge || 0, o.total || 0, o.paidAmount || 0, o.method, o.dueDate, o.cancelled ? 'yes' : '', o.cancelReason, o.createdBy?.name, o.updatedBy?.name])];
+    } else if (what === 'returns') {
+      rows = [['Return no', 'Date', 'Customer', 'Phone', ...per('returned'), 'Money (₹)', 'Method', 'Collected by', 'Cancelled', 'Cancel reason', 'Entered by', 'Edited by'],
+        ...cols.map((c) => [c.no, c.date, ...person(c), ...PRODUCTS.map((p) => n(c.returned, p)), c.amount || 0, c.method, c.collectedBy?.name, c.cancelled ? 'yes' : '', c.cancelReason, c.createdBy?.name, c.updatedBy?.name])];
+    } else { // every rupee received, at delivery or later; cancelled entries left out
+      const paid = [...orders.filter((o) => !o.cancelled && o.paidAmount > 0).map((o) => [o.date, ...person(o), `Order #${o.no}`, o.method, o.paidAmount, o.createdBy?.name]),
+        ...cols.filter((c) => !c.cancelled && c.amount > 0).map((c) => [c.date, ...person(c), `Return #${c.no}`, c.method, c.amount, c.collectedBy?.name || c.createdBy?.name])];
+      rows = [['Date', 'Customer', 'Phone', 'Received with', 'Method', 'Amount (₹)', 'Received by'], ...paid.sort((a, b) => a[0].localeCompare(b[0]))];
+    }
+  }
+  const span = what === 'customers' ? today() : [req.query.from, req.query.to].filter(Boolean).join('_to_') || 'all';
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="upmarketing-${what}-${span}.csv"` });
+  res.send(toCsv(rows));
 }));
 
 // ---- edit history (admin) ----
