@@ -7,7 +7,7 @@ const { createApp } = require('../app');
 const { requireRole, hashPassword } = require('../lib/auth');
 const { asUser, AuditLog } = require('../lib/audit');
 const { User, Order, Customer } = require('../models');
-const { api: routes, publicInfo, seedProducts, fixCustomerPhones } = require('../routes');
+const { api: routes, publicInfo, seedProducts, fixCustomerPhones, numberOldEntries } = require('../routes');
 
 const url = process.env.MONGO_TEST_URL || 'mongodb://127.0.0.1:27017/upmarketing_test';
 
@@ -32,7 +32,7 @@ test('server', async (t) => {
   api.get('/whoami', (req, res) => res.json(req.user));
   api.delete('/admin-thing', requireRole('admin'), (req, res) => res.json({ ok: true }));
   api.use(routes);
-  const app = createApp({ mongoUrl: url, sessionSecret: 'test-secret-'.padEnd(40, 'x'), api, publicInfo });
+  const app = createApp({ sessionSecret: 'test-secret-'.padEnd(40, 'x'), api, publicInfo });
 
   const server = app.listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -41,7 +41,7 @@ test('server', async (t) => {
     return { status: r.status, json: await r.json().catch(() => null), cookie: r.headers.get('set-cookie')?.split(';')[0] };
   };
 
-  t.after(async () => { server.closeAllConnections(); server.close(); await app.locals.sessionStore.close(); await mongoose.connection.dropDatabase(); await mongoose.disconnect(); });
+  t.after(async () => { server.closeAllConnections(); server.close(); await mongoose.connection.dropDatabase(); await mongoose.disconnect(); });
 
   await t.test('api requires login', async () => {
     assert.equal((await call('GET', '/api/whoami')).status, 401);
@@ -70,7 +70,8 @@ test('server', async (t) => {
   });
 
   await t.test('weak secrets and passwords are refused', async () => {
-    assert.throws(() => createApp({ mongoUrl: url, sessionSecret: 'short' }), /32 characters/);
+    assert.throws(() => createApp({ sessionSecret: 'short' }), /32 characters/);
+    assert.equal((await call('GET', '/healthz')).status, 200); // host health check, no login
     assert.throws(() => hashPassword('1234567'), /8 characters/);
   });
 
@@ -149,6 +150,11 @@ test('server', async (t) => {
     await call('PUT', '/api/products/big_jar', { price: 50 }, boss); // later price change doesn't touch old orders
     const edited = await call('PUT', `/api/orders/${o.json._id}`, { qty: { big_jar: 3, small_jar: 1 } }, meena);
     assert.equal(edited.json.total, 3 * 40 + 25 + 10);
+    // The boss had the order open from before Meena's edit: their save is refused, not silently undoing hers.
+    const stale = await call('PUT', `/api/orders/${o.json._id}`, { qty: { big_jar: 9 }, __v: o.json.__v }, boss);
+    assert.equal(stale.status, 409);
+    assert.match(stale.json.error, /Meena changed this order/);
+    assert.equal((await call('PUT', `/api/orders/${o.json._id}`, { qty: { big_jar: 3, small_jar: 1 }, __v: edited.json.__v }, boss)).status, 200); // up to date: fine
 
     const list = (await call('GET', '/api/customers', null, meena)).json;
     const row = list.find((c) => c.name === 'John');
@@ -169,6 +175,26 @@ test('server', async (t) => {
     assert.equal((await call('DELETE', `/api/customers/${john._id}`, null, boss)).status, 409); // has entries
     assert.equal((await call('DELETE', `/api/orders/${o.json._id}`, null, boss)).status, 200);
     assert.equal((await AuditLog.countDocuments({ docId: o.json._id })), 3); // create, update, delete
+    const gone = (await call('GET', '/api/audit', null, boss)).json.find((l) => l.action === 'delete' && l.what === 'Order');
+    assert.equal(gone.about, `#${o.json.no} · John · 2026-01-10`);
+    assert.deepEqual(gone.held, { 'qty.big_jar': 3, 'qty.small_jar': 1, deliveryCharge: 10, kind: 'regular', method: 'cash' }); // what was deleted stays visible
+    assert.ok(Number.isInteger(o.json.no) && o.json.no > 0); // every order gets a number
+    assert.ok(gone.restorable);
+    assert.equal((await call('POST', `/api/audit/${gone._id}/restore`, null, meena)).status, 403);
+    assert.equal((await call('POST', `/api/audit/${gone._id}/restore`, null, boss)).status, 200);
+    const back = await Order.findById(o.json._id).lean();
+    assert.equal(back.no, o.json.no); // same number, same items, same person who entered it
+    assert.equal(back.qty.big_jar, 3);
+    assert.equal(String(back.createdBy), String((await User.findOne({ username: 'meena' }))._id));
+    assert.equal((await call('POST', `/api/audit/${gone._id}/restore`, null, boss)).status, 409); // already back
+    const o2 = await call('POST', '/api/orders', { date: '2026-01-10', customer: john._id, qty: { small_jar: 1 } }, meena);
+    assert.equal(o2.json.no, o.json.no + 1);
+    await asUser(null, async () => { for (const d of [back, o2.json]) await (await Order.findById(d._id)).deleteOne(); }); // leave the ledger as the later steps expect
+    // Entries from before numbering get numbers once, after the newest one, oldest first.
+    await Order.collection.insertOne({ date: '2026-01-01', customer: john._id, qty: {}, total: 0, paidAmount: 0 });
+    await numberOldEntries();
+    assert.equal((await Order.findOne({ date: '2026-01-01' }).lean()).no, o.json.no + 2);
+    await asUser(null, async () => (await Order.findOne({ date: '2026-01-01' })).deleteOne());
   });
 
   await t.test('returns: vessels and money come off the balance; roles', async () => {
@@ -263,7 +289,7 @@ test('server', async (t) => {
     // Employee starts a round, then closes it.
     const start = await call('POST', '/api/pheras', { date: '2026-01-10', team: team._id, startTime: '08:30', filledOut: { big_jar: 40, small_jar: 20 } }, meena);
     assert.equal(start.status, 201);
-    assert.deepEqual(start.json.sold, { small_jar: 20, big_jar: 40, small_bottle: 0, big_bottle: 0 }); // nothing back yet
+    assert.deepEqual(start.json.sold, { small_jar: 0, big_jar: 0, small_bottle: 0, big_bottle: 0 }); // still out: nothing counted as sold yet
     const close = await call('PUT', `/api/pheras/${start.json._id}`, { endTime: '12:15', filledBack: { big_jar: 6, small_jar: 5 }, emptiesBack: { big_jar: 30 } }, meena);
     assert.equal(close.json.sold.big_jar, 34);
     assert.equal(close.json.sold.small_jar, 15);
@@ -408,14 +434,27 @@ test('server', async (t) => {
     const now = async () => (await call('GET', `/api/customers/${c._id}`, null, meena)).json;
     assert.equal((await now()).held.big_jar, undefined);
 
-    assert.equal((await call('PUT', `/api/collections/${r._id}`, { cancelled: true }, meena)).status, 200); // they really brought 0
+    assert.equal((await call('PUT', `/api/collections/${r._id}`, { cancelled: true }, meena)).status, 400); // a reason is required
+    assert.equal((await call('PUT', `/api/collections/${r._id}`, { cancelled: true, cancelReason: 'Entered twice' }, meena)).status, 200); // they really brought 0
     assert.equal((await now()).held.big_jar, 5);
-    assert.equal((await call('PUT', `/api/orders/${o._id}`, { cancelled: true }, meena)).status, 200);
+    assert.equal((await call('PUT', `/api/orders/${o._id}`, { cancelled: true, cancelReason: 'Customer called off' }, meena)).status, 200);
     const after = await now();
     assert.deepEqual([after.held, after.owed], [{}, 0]);
     assert.ok(after.statement.every((row) => row.cancelled));
+    assert.ok(after.statement.some((row) => row.note === 'cancelled: Customer called off'));
+
+    // A double tap or a retry with the same key saves once.
+    const body = { key: 'form-abc-1', date: '2026-02-03', customer: c._id, qty: { big_jar: 1 }, address: 'Plot 7, Lake Road' };
+    const first = await call('POST', '/api/orders', body, meena);
+    const again = await call('POST', '/api/orders', body, meena);
+    assert.deepEqual([first.status, again.status, again.json._id], [201, 200, first.json._id]);
+
+    // Admins find a customer by any address used; staff don't get old addresses.
+    const boss = (await call('POST', '/api/auth/login', { username: 'priyansh', password: 'admin-pass-1' })).cookie;
+    assert.deepEqual((await call('GET', '/api/customers', null, boss)).json.find((x) => x._id === c._id).addresses, ['Plot 7, Lake Road']);
+    assert.equal((await call('GET', '/api/customers', null, meena)).json.find((x) => x._id === c._id).addresses, undefined);
     assert.equal((await call('PUT', `/api/orders/${o._id}`, { cancelled: false }, meena)).status, 200); // restore
-    assert.equal((await now()).owed, 250);
+    assert.equal((await now()).owed, 300); // 250 restored + the 50 key-test order
   });
 
   await t.test('public page: no login, only regular prices of items on sale', async () => {

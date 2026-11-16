@@ -83,7 +83,15 @@ const VERB = { create: 'added', update: 'changed', delete: 'deleted' };
 
 function History() {
   const [staffOnly, setStaffOnly] = useState(false);
-  const { data, ...status } = useLoad(() => api('GET', `/audit${staffOnly ? '?role=employee' : ''}`), [staffOnly]);
+  const { data, reload, ...status } = useLoad(() => api('GET', `/audit${staffOnly ? '?role=employee' : ''}`), [staffOnly]);
+  const [msg, setMsg] = useState(null);
+  const [restoring, setRestoring] = useState(null); // one restore at a time; the button waits until it's done
+  const restore = async (l) => {
+    if (restoring || !window.confirm(`Put this ${l.what.toLowerCase()} back exactly as it was?`)) return;
+    setMsg(null);
+    setRestoring(l._id);
+    try { await api('POST', `/audit/${l._id}/restore`); setMsg({ ok: `${l.what} restored.` }); reload(); } catch (e) { setMsg({ error: e.message }); } finally { setRestoring(null); }
+  };
   const when = (at) => new Date(at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 
   return (
@@ -91,13 +99,15 @@ function History() {
       <div className="flex flex-wrap items-center justify-between gap-3 p-5">
         <div>
           <h2 className="font-display text-lg font-bold">Edit history</h2>
-          <p className="text-sm text-muted">The latest 300 changes, newest first. Employee changes are marked.</p>
+          <p className="text-sm text-muted">The latest 300 changes, newest first. Employee changes are marked. A deleted entry can be put back with Restore.</p>
         </div>
         <label className="btn cursor-pointer">
           <input type="checkbox" className="accent-accent" checked={staffOnly} onChange={(e) => setStaffOnly(e.target.checked)} /> Employee changes only
         </label>
       </div>
       <Status {...status} />
+      {msg?.error && <p role="alert" className="px-5 text-bad">{msg.error}</p>}
+      {msg?.ok && <p role="status" className="px-5 text-ok">{msg.ok}</p>}
       {data && !data.length && <p className="border-t border-line px-5 py-8 text-center text-muted">No changes recorded.</p>}
       {(data || []).map((l) => (
         <div key={l._id} className={`space-y-1 border-t border-line px-5 py-3 ${l.role === 'employee' ? 'border-l-4 border-l-warn bg-warn-soft/40' : ''}`}>
@@ -114,6 +124,10 @@ function History() {
               {Object.entries(l.changes).map(([path, c]) => <li key={path}>{field(path)}: <span className="line-through">{show(c.from)}</span> → <span className="font-semibold text-fg">{show(c.to)}</span></li>)}
             </ul>
           )}
+          {l.held && (
+            <p className="text-sm text-muted">It had: {Object.entries(l.held).map(([path, v]) => `${field(path)} ${show(v)}`).join(', ') || 'nothing'}</p>
+          )}
+          {l.restorable && <button type="button" className="btn min-h-8 px-3 text-xs" disabled={Boolean(restoring)} onClick={() => restore(l)}>{restoring === l._id ? 'Restoring…' : 'Restore'}</button>}
         </div>
       ))}
     </section>

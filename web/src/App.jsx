@@ -12,10 +12,10 @@ import Public from './Public.jsx';
 
 function Logo() {
   return (
-    <span className="flex items-center gap-3">
+    <a href="#/" aria-label="UP MARKETING, go to Today" className="flex items-center gap-3">
       <span aria-hidden="true" className="flex h-9 w-9 -rotate-45 items-center justify-center rounded-[50%_50%_50%_0] bg-white"><span className="rotate-45 font-display text-xs font-extrabold text-accent">UP</span></span>
       <span className="font-display text-lg font-bold tracking-tight">UP MARKETING</span>
-    </span>
+    </a>
   );
 }
 
@@ -159,7 +159,7 @@ function Page({ parts, query }) {
   if (section === 'customers') {
     if (a && parts[2] === 'settle') return <SettleForm key={a} id={a} />;
     if (a) return <CustomerDetail key={a} id={a} />;
-    return <Customers key={query.pending || 'all'} pendingOnly={Boolean(query.pending)} />;
+    return <Customers key={`${query.pending}${query.q}`} pendingOnly={Boolean(query.pending)} initialQ={query.q} />;
   }
   return <Today />;
 }

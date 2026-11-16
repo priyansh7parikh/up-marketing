@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import { CustomerPicker } from './CustomerPicker.jsx';
 import { UpiScreen } from './Orders.jsx';
-import { Avatar, CancelToggle, CancelledNote, DueChip, Field, Icon, PRODUCTS, PageHead, SearchBox, Status, Stepper, addDays, fmtDay, go, isMobile, normalizePhone, rupees, today, useApp, useLoad, vesselText } from './ui.jsx';
+import { Avatar, CancelToggle, newKey, CancelledNote, DueChip, Field, Icon, PRODUCTS, PageHead, SearchBox, Status, Stepper, addDays, fmtDay, go, isMobile, normalizePhone, rupees, today, useApp, useLoad, vesselText, TooMany } from './ui.jsx';
 
 const zero = () => Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
 const total = (list, pick) => list.reduce((n, c) => n + Math.round((pick(c) || 0) * 100), 0) / 100;
@@ -48,6 +48,7 @@ export function Returns() {
             <Cell label="UPI collected" value={rupees(total(shown, (c) => (c.method === 'upi' ? c.amount : 0)))} tone="text-ok" />
           </div>
         )}
+        <TooMany list={data} />
         {!data && <div className="p-5"><Status {...status} /></div>}
         {data && !shown.length && <p className="border-t border-line px-5 py-8 text-center text-muted">Nothing recorded {range}.</p>}
         {shown.map((c) => (
@@ -56,7 +57,7 @@ export function Returns() {
               <Avatar name={c.customer?.name} />
               <span className="min-w-0">
                 <span className="block truncate font-semibold">{c.customer?.name || 'Unknown'}</span>
-                <span className="block truncate text-xs text-muted">{c.customer?.phone || 'no phone'} · {fmtDay(c.date)}</span>
+                <span className="block truncate text-xs text-muted">{c.no ? `#${c.no} · ` : ''}{c.customer?.phone || 'no phone'} · {fmtDay(c.date)}</span>
               </span>
             </span>
             <span className="col-span-2 font-medium lg:col-span-1">{c.cancelled && <span className="chip chip-bad mr-2">Cancelled</span>}<span className={c.cancelled ? 'line-through' : ''}>{vesselText(c.returned, names) || 'No items'}</span></span>
@@ -77,6 +78,7 @@ export function ReturnForm({ id, presetCustomer }) {
   const [form, setForm] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [key] = useState(newKey);
   const [upi, setUpi] = useState(null);
 
   const held = (cid) => ({ ...zero(), ...customers.data?.find((c) => c._id === cid)?.held });
@@ -117,13 +119,14 @@ export function ReturnForm({ id, presetCustomer }) {
       const body = {
         date: form.date, customer: form.customer, returned: form.returned, collectedBy: form.collectedBy,
         method: form.pay === 'upi' ? 'upi' : 'cash', amount: paying && !showQr ? amount : 0,
+        ...(id && { __v: existing.data.__v }), // the version this form loaded: refused if someone saved since
       };
       if (showQr && !PRODUCTS.some((p) => form.returned[p])) {
         // Money only, by UPI: nothing to save until it is received.
         setUpi({ order: { customer: who, date: form.date }, amount, body });
         return;
       }
-      const saved = id ? await api('PUT', `/collections/${id}`, body) : await api('POST', '/collections', body);
+      const saved = id ? await api('PUT', `/collections/${id}`, body) : await api('POST', '/collections', { ...body, key });
       if (showQr) setUpi({ order: { ...saved, customer: who }, amount });
       else go(`/customers/${form.customer}`);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
@@ -138,7 +141,7 @@ export function ReturnForm({ id, presetCustomer }) {
     const done = () => go(`/customers/${upi.order.customer._id}`);
     const received = async () => {
       if (upi.order._id) await api('PUT', `/collections/${upi.order._id}`, { amount: upi.amount, method: 'upi' });
-      else await api('POST', '/collections', { ...upi.body, amount: upi.amount });
+      else await api('POST', '/collections', { ...upi.body, amount: upi.amount, key });
       done();
     };
     return <UpiScreen {...upi} onLater={done} onReceived={received} />;
@@ -146,8 +149,8 @@ export function ReturnForm({ id, presetCustomer }) {
 
   return (
     <form onSubmit={submit} className="max-w-3xl space-y-4">
-      <PageHead eyebrow="Collection" title={id ? 'Edit return' : 'Record a return'} sub="Jars and bottles that came back, and any money collected." />
-      {existing.data?.cancelled && <CancelledNote what="entry" />}
+      <PageHead eyebrow="Collection" title={id ? `Edit return${existing.data?.no ? ` #${existing.data.no}` : ''}` : 'Record a return'} sub="Jars and bottles that came back, and any money collected." />
+      {existing.data?.cancelled && <CancelledNote what="entry" reason={existing.data.cancelReason} />}
       {existing.data && (
         <div className="text-xs text-faint">
           added by {existing.data.createdBy?.name || 'system'}{existing.data.updatedBy && ` · edited by ${existing.data.updatedBy.name}`}

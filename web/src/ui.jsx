@@ -8,6 +8,11 @@ export const BUSINESS = 'UP MARKETING';
 export const PRODUCTS = ['small_jar', 'big_jar', 'small_bottle', 'big_bottle'];
 const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
 export const today = () => ymd.format(new Date());
+// The server sends at most this many entries per list (LIST_MAX in routes). At the limit, totals would be short: say so.
+const LIST_MAX = 5000;
+export const TooMany = ({ list }) => (list?.length >= LIST_MAX
+  ? <p role="alert" className="chip chip-warn m-3 block whitespace-normal p-3">Only the newest {LIST_MAX} entries are shown, so the totals here are short. Pick fewer days.</p>
+  : null);
 export const addDays = (d, n) => {
   const t = new Date(`${d}T00:00:00Z`);
   t.setUTCDate(t.getUTCDate() + n);
@@ -171,12 +176,21 @@ export function SearchBox({ value, onChange, placeholder = 'Search customers or 
 // Cancel (or restore) an order or a return entered by mistake. Anyone can; it stays on record, counts for nothing, and is audited.
 export function CancelToggle({ path, cancelled, what, onDone, onError }) {
   const toggle = async () => {
-    if (!window.confirm(cancelled ? `Restore this ${what}? It counts again.` : `Cancel this ${what}? It stays on record but counts for nothing.`)) return;
-    try { await api('PUT', path, { cancelled: !cancelled }); onDone(); } catch (e) { onError(e.message); }
+    let body = { cancelled: false };
+    if (cancelled) { if (!window.confirm(`Restore this ${what}? It counts again.`)) return; } else {
+      const reason = window.prompt(`Why is this ${what} cancelled? (It stays on record but counts for nothing.)`);
+      if (reason === null) return;
+      if (!reason.trim()) return onError('Say why it is cancelled.');
+      body = { cancelled: true, cancelReason: reason.trim() };
+    }
+    try { await api('PUT', path, body); onDone(); } catch (e) { onError(e.message); }
   };
   return <button type="button" className={`btn ${cancelled ? '' : 'btn-danger'}`} onClick={toggle}>{cancelled ? `Restore ${what}` : `Cancel ${what}`}</button>;
 }
 
-export const CancelledNote = ({ what }) => (
-  <p role="status" className="rounded-2xl border border-bad/30 bg-bad-soft p-4 font-semibold text-bad">This {what} is cancelled. It is kept for the record but counts for nothing.</p>
+export const CancelledNote = ({ what, reason }) => (
+  <p role="status" className="rounded-2xl border border-bad/30 bg-bad-soft p-4 font-semibold text-bad">This {what} is cancelled{reason && ` (${reason})`}. It is kept for the record but counts for nothing.</p>
 );
+
+// One per form: the server saves a POST with the same key only once (double tap, retry after the network dropped).
+export const newKey = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;

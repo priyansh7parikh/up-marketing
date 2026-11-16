@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { api } from './api.js';
 import { CustomerPicker } from './CustomerPicker.jsx';
-import { Avatar, BUSINESS, CancelToggle, CancelledNote, DueChip, Field, Icon, PageHead, PRODUCTS, SearchBox, isMobile, normalizePhone, Status, Stepper, addDays, fmtDay, go, rupees, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
+import { Avatar, BUSINESS, CancelToggle, newKey, CancelledNote, DueChip, Field, Icon, PageHead, PRODUCTS, SearchBox, isMobile, normalizePhone, Status, Stepper, addDays, fmtDay, go, rupees, today, upiHref, useApp, useLoad, vesselText, waHref, TooMany } from './ui.jsx';
 
 // The customer's state right now (returns are counted per customer, oldest first, not per order).
 function StatusPill({ s }) {
@@ -38,7 +38,7 @@ export function OrderTable({ orders, summaries, empty = 'No orders yet.' }) {
             </span>
             <span className="col-span-2 lg:col-span-1">
               <span className={`block font-medium ${o.cancelled ? 'line-through' : ''}`}>{vesselText(o.qty, names) || 'No items'} · {rupees(o.total)}</span>
-              <span className="block text-xs text-muted">{o.kind === 'party' ? 'Party order · ' : ''}Ordered {fmtDay(o.date)}{vesselText(o.emptiesBack, names) && ` · empties back: ${vesselText(o.emptiesBack, names)}`}</span>
+              <span className="block text-xs text-muted">{o.no ? `#${o.no} · ` : ''}{o.kind === 'party' ? 'Party order · ' : ''}Ordered {fmtDay(o.date)}{vesselText(o.emptiesBack, names) && ` · empties back: ${vesselText(o.emptiesBack, names)}`}</span>
             </span>
             <span>{o.cancelled ? <span className="chip chip-bad">Cancelled</span> : due > 0 ? <span className="chip chip-bad">{rupees(due)} due</span> : o.total > 0 ? <span className="chip chip-ok">Paid · {o.method}</span> : <span className="chip">₹0 · no price</span>}</span>
             <span className="text-right text-sm lg:text-left">{fmtDay(o.dueDate || addDays(o.date, 1))}</span>
@@ -130,6 +130,7 @@ export function Orders() {
             <Field label="To"><input className="input" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} /></Field>
           </div>
         </div>
+        <TooMany list={data} />
         {data && <SalesSummary orders={shown.filter((o) => !o.cancelled)} />}
         {!data ? <div className="p-5"><Status {...status} /></div> : <OrderTable orders={shown} summaries={byId(customers.data)} empty="No orders match." />}
       </div>
@@ -178,6 +179,7 @@ export function OrderForm({ id, presetCustomer }) {
   const existing = useLoad(() => (id ? api('GET', `/orders/${id}`) : Promise.resolve(null)), [id]);
   const [form, setForm] = useState(null);
   const [error, setError] = useState('');
+  const [key] = useState(newKey);
   const [busy, setBusy] = useState(false);
   const [upi, setUpi] = useState(null); // { order, amount } while the QR is showing
 
@@ -247,8 +249,9 @@ export function OrderForm({ id, presetCustomer }) {
         deliveryType: form.deliveryType, deliveryCharge: Number(form.deliveryCharge || 0), dueDate: form.dueDate,
         method: form.pay === 'upi' ? 'upi' : 'cash',
         paidAmount: form.pay === 'none' || showQr ? 0 : amount,
+        ...(id && { __v: existing.data.__v }), // the version this form loaded: refused if someone saved since
       };
-      const saved = id ? await api('PUT', `/orders/${id}`, body) : await api('POST', '/orders', body);
+      const saved = id ? await api('PUT', `/orders/${id}`, body) : await api('POST', '/orders', { ...body, key });
       if (showQr) setUpi({ order: { ...saved, customer: { _id: customer, name: match && !form.renaming ? match.name : form.name.trim(), phone } }, amount });
       else go(`/customers/${customer}`);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
@@ -266,8 +269,8 @@ export function OrderForm({ id, presetCustomer }) {
 
   return (
     <form onSubmit={submit} className="max-w-3xl space-y-4">
-      <PageHead eyebrow="Customer checkout" title={id ? 'Edit order' : 'Create a new order'} sub="Record the customer, items, payment and return date." />
-      {existing.data?.cancelled && <CancelledNote what="order" />}
+      <PageHead eyebrow="Customer checkout" title={id ? `Edit order${existing.data?.no ? ` #${existing.data.no}` : ''}` : 'Create a new order'} sub="Record the customer, items, payment and return date." />
+      {existing.data?.cancelled && <CancelledNote what="order" reason={existing.data.cancelReason} />}
       {existing.data && (
         <div className="text-xs text-faint">
           added by {existing.data.createdBy?.name || 'system'}{existing.data.updatedBy && ` · edited by ${existing.data.updatedBy.name}`}

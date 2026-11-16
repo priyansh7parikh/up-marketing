@@ -15,14 +15,14 @@ function Balance({ s, names }) {
   );
 }
 
-export function Customers({ pendingOnly = false }) {
-  const { names } = useApp();
+export function Customers({ pendingOnly = false, initialQ = '' }) {
+  const { names, user } = useApp();
   const { data, ...status } = useLoad(() => api('GET', '/customers'));
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(initialQ);
   const [onlyPending, setOnlyPending] = useState(pendingOnly);
   const needle = q.trim().toLowerCase();
   const list = [...(data || [])].sort((a, b) => (pendingOnly ? (a.oldestDate || '9').localeCompare(b.oldestDate || '9') : 0)).filter((c) => (!onlyPending || c.pending || c.owed > 0 || Object.keys(c.held).length)
-    && (!needle || [c.name, c.nameGu, c.phone].some((v) => v?.toLowerCase().includes(needle))));
+    && (!needle || [c.name, c.nameGu, c.phone, ...(c.addresses || [])].some((v) => v?.toLowerCase().includes(needle))));
 
   return (
     <div className="space-y-4">
@@ -35,7 +35,7 @@ export function Customers({ pendingOnly = false }) {
         <a href="#/orders/new" className="btn btn-primary">+ New order</a>
       </div>
       <div className="flex flex-wrap gap-3">
-        <input className="input max-w-md flex-1" type="search" placeholder="Search name or phone" aria-label="Search customers" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="input max-w-md flex-1" type="search" placeholder={user.role === 'admin' ? 'Search name, phone or address' : 'Search name or phone'} aria-label="Search customers" value={q} onChange={(e) => setQ(e.target.value)} />
         <label className="btn cursor-pointer">
           <input type="checkbox" className="accent-accent" checked={onlyPending} onChange={(e) => setOnlyPending(e.target.checked)} /> Pending only
         </label>
@@ -120,6 +120,8 @@ export function CustomerDetail({ id }) {
   if (editing) return <CustomerForm customer={c} onSaved={() => { setEditing(false); reload(); }} />;
 
   const vessels = vesselText(c.held, names);
+  // Every address used on an order, newest first (statement is newest first). Admin only; never suggested to staff.
+  const places = [...new Map(c.statement.filter((r) => r.address).map((r) => [r.address, r.date]).reverse()).entries()].sort((a, b) => b[1].localeCompare(a[1]));
   const reminder = `Hello ${c.name}, this is ${BUSINESS}. Pending: ${[vessels, c.owed > 0 && rupees(c.owed)].filter(Boolean).join(' and ') || 'nothing'}. Thank you.`;
   const undoSettle = async (r) => {
     if (!window.confirm('Undo this settlement? The amount and items come back as pending.')) return;
@@ -161,6 +163,12 @@ export function CustomerDetail({ id }) {
         </div>
       </div>
 
+      {user.role === 'admin' && places.length > 0 && (
+        <details className="card">
+          <summary className="cursor-pointer font-semibold">Addresses used ({places.length})</summary>
+          <ul className="mt-2 space-y-1 text-sm">{places.map(([a, d]) => <li key={a}>{a} <span className="text-faint">· last {fmtDay(d)}</span></li>)}</ul>
+        </details>
+      )}
       <h2 className="eyebrow pt-2">Ledger</h2>
       {!c.statement.length && <p className="card text-muted">No entries yet.</p>}
       <div className="space-y-2">
@@ -174,7 +182,7 @@ export function CustomerDetail({ id }) {
             <Row key={r.id} href={href}
               className="card grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl py-3 hover:border-line-strong lg:grid-cols-[5rem_8rem_1fr_6rem_6rem_7rem_9rem] lg:items-center">
               <span>{fmtDay(r.date)}</span>
-              <span className="text-right text-muted lg:text-left">{r.cancelled ? <span className="chip chip-bad">Cancelled {KIND[r.kind].toLowerCase()}</span> : KIND[r.kind]}</span>
+              <span className="text-right text-muted lg:text-left">{r.cancelled ? <span className="chip chip-bad">Cancelled {KIND[r.kind].toLowerCase()}</span> : KIND[r.kind]}{r.no ? ` #${r.no}` : ''}</span>
               <span className="col-span-2 lg:col-span-1">{vesselText(r.vessels, names, true) || '—'}{r.note && <span className="text-muted"> · {r.note}</span>}
                 {r.kind === 'settlement' && user.role === 'admin' && <button type="button" className="btn ml-2 min-h-8 px-3 text-xs" onClick={() => undoSettle(r)}>Undo</button>}</span>
               <span className="lg:text-right">{r.billed ? <><span className="text-faint lg:hidden">billed </span>{rupees(r.billed)}</> : ''}</span>

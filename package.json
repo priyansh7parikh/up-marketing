@@ -8,5 +8,8 @@
     "dev": "npm --prefix backend run dev",
     "dev:web": "npm --prefix web run dev",
     "test": "npm --prefix backend test"
+  },
+  "engines": {
+    "node": ">=22.9"
   }
 }

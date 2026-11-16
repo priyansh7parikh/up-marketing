@@ -145,8 +145,8 @@ function statement({ orders = [], collections = [], settlements = [] }) {
     for (const [p, n] of Object.entries(v)) held[p] = Math.max(0, held[p] + n); // extra returns aren't ours
     net += paise(billed) - paise(paid);
     return {
-      kind, id: doc._id, date: day(doc.date), vessels: v, billed, paid, method: doc.method, note: doc.reason || doc.address,
-      by: doc.createdBy, editedBy: doc.updatedBy, cancelled: Boolean(doc.cancelled),
+      kind, id: doc._id, date: day(doc.date), vessels: v, billed, paid, method: doc.method, note: doc.cancelled ? `cancelled: ${doc.cancelReason || ''}` : doc.reason || doc.address, address: doc.address,
+      by: doc.createdBy, editedBy: doc.updatedBy, cancelled: Boolean(doc.cancelled), no: doc.no,
       held: Object.fromEntries(Object.entries(held).filter(([, n]) => n)), balance: net / 100,
     };
   });

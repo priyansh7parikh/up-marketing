@@ -46,6 +46,7 @@ function currentUser() {
 function auditPlugin(schema) {
   schema.add({ createdBy: { type: ObjectId, ref: 'User' }, updatedBy: { type: ObjectId, ref: 'User' } });
   schema.set('timestamps', true);
+  schema.set('optimisticConcurrency', true); // every save bumps __v and only lands if nobody saved in between
 
   // Query-style writes skip document hooks, so they'd skip the audit. Force load → change → save().
   const blocked = function () { throw new Error(`${this.model.modelName}: use doc.save()/doc.deleteOne() so changes are audited`); };
@@ -57,7 +58,7 @@ function auditPlugin(schema) {
   schema.pre('save', function () {
     const user = currentUser();
     this.$locals.wasNew = this.isNew;
-    if (this.isNew) this.createdBy = user.id;
+    if (this.isNew && !this.$locals.restored) this.createdBy = user.id; // a restored entry keeps who first entered it
     else this.updatedBy = user.id;
   });
 

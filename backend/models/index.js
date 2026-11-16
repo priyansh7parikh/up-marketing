@@ -26,6 +26,15 @@ const MOBILE = /^[6-9]\d{9}$/; // Indian mobiles start 6-9; this also rejects 10
 
 const audited = (schema) => { schema.plugin(auditPlugin); return schema; };
 
+// Entry numbers people can say and write down: Order #1, #2… and Return #1, #2…, one counter each, never reused.
+const Counter = mongoose.model('Counter', new mongoose.Schema({ _id: String, n: Number }));
+const nextNo = async (name) => (await Counter.findOneAndUpdate({ _id: name }, { $inc: { n: 1 } }, { upsert: true, new: true })).n;
+const numbered = (name, schema) => {
+  schema.add({ no: { type: Number, unique: true, sparse: true } });
+  schema.pre('save', async function () { if (this.isNew && !this.no) this.no = await nextNo(name); }); // a restored entry keeps its number
+  return schema;
+};
+
 const User = mongoose.model('User', new mongoose.Schema({
   username: { type: String, required: true, unique: true, lowercase: true, trim: true, match: [/^[a-z0-9._-]+$/, 'Sign-in name can only have letters, numbers, dot, dash or underscore'] },
   name: { type: String, required: true, trim: true },
@@ -55,8 +64,10 @@ const Product = mongoose.model('Product', audited(new mongoose.Schema({
   sellPhera: { type: Boolean, default: true },
 })));
 
-const Order = mongoose.model('Order', audited(new mongoose.Schema({
+const Order = mongoose.model('Order', audited(numbered('Order', new mongoose.Schema({
   cancelled: { type: Boolean, default: false }, // customer cancelled: kept for the record, counts for nothing
+  cancelReason: String,
+  key: { type: String, unique: true, sparse: true }, // set by the form once; a retried save returns the first one
   date: { ...Day, required: true, index: true },
   customer: { type: ObjectId, ref: 'Customer', required: true, index: true },
   kind: { type: String, enum: ['regular', 'party'], default: 'regular' }, // which price list it bills from
@@ -71,10 +82,12 @@ const Order = mongoose.model('Order', audited(new mongoose.Schema({
   method,
   dueDate: Day, // empty → next day
   scan: { type: ObjectId, ref: 'Scan' },
-})));
+}))));
 
-const Collection = mongoose.model('Collection', audited(new mongoose.Schema({
+const Collection = mongoose.model('Collection', audited(numbered('Collection', new mongoose.Schema({
   cancelled: { type: Boolean, default: false }, // a wrong entry: kept for the record, counts for nothing
+  cancelReason: String,
+  key: { type: String, unique: true, sparse: true }, // set by the form once; a retried save returns the first one
   date: { ...Day, required: true, index: true },
   customer: { type: ObjectId, ref: 'Customer', required: true, index: true },
   returned: { type: Vessels, default: () => ({}) },
@@ -82,7 +95,7 @@ const Collection = mongoose.model('Collection', audited(new mongoose.Schema({
   method,
   collectedBy: { type: ObjectId, ref: 'User' },
   scan: { type: ObjectId, ref: 'Scan' },
-})));
+}))));
 
 const Settlement = mongoose.model('Settlement', audited(new mongoose.Schema({
   date: { ...Day, required: true },
@@ -123,4 +136,4 @@ const Settings = mongoose.model('Settings', audited(new mongoose.Schema({
   about: String,
 })));
 
-module.exports = { normalizePhone, MOBILE, User, Customer, Product, Order, Collection, Settlement, Settings, Team, Phera };
+module.exports = { Counter, normalizePhone, MOBILE, User, Customer, Product, Order, Collection, Settlement, Settings, Team, Phera };

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api } from './api.js';
-import { BUSINESS, Icon, Legend, PRODUCTS, SHORT, Status, addDays, fmtDay, rupees, telHref, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
+import { BUSINESS, Icon, Legend, go, PRODUCTS, SHORT, Status, addDays, fmtDay, rupees, telHref, today, upiHref, useApp, useLoad, vesselText, waHref } from './ui.jsx';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const count = (v) => PRODUCTS.reduce((n, p) => n + (v?.[p] || 0), 0);
@@ -77,6 +77,8 @@ export default function Today() {
   const from = admin ? weekStart() : today();
   const customers = useLoad(() => api('GET', '/customers'));
   const orders = useLoad(() => api('GET', `/orders?from=${from}&to=${today()}`), [from]);
+  const booked = useLoad(() => api('GET', `/orders?from=${addDays(today(), 1)}&to=${addDays(today(), 7)}`));
+  const [find, setFind] = useState('');
   const collections = useLoad(() => api('GET', `/collections?from=${from}&to=${today()}`), [from]);
   const pheras = useLoad(() => api('GET', `/pheras?from=${from}&to=${today()}`), [from]);
   const loads = [customers, orders, collections, pheras];
@@ -120,6 +122,11 @@ export default function Today() {
           </div>
         )}
       </div>
+
+      <form role="search" onSubmit={(e) => { e.preventDefault(); if (find.trim()) go(`/customers?q=${encodeURIComponent(find.trim())}`); }} className="flex gap-2">
+        <input className="input" type="search" aria-label="Find a customer" placeholder={admin ? 'Find a customer: name, phone or address' : 'Find a customer: name or phone'} value={find} onChange={(e) => setFind(e.target.value)} />
+        <button className="btn btn-primary shrink-0"><Icon name="search" className="h-4 w-4" /> Find</button>
+      </form>
 
       {unpriced.length > 0 && (
         <a href={admin ? '#/admin' : undefined} role="alert" className="block rounded-2xl border border-bad/30 bg-bad-soft p-4 text-bad">
@@ -165,12 +172,25 @@ export default function Today() {
         {pending.map((c) => <PendingCard key={c._id} c={c} upiVpa={settings.upiVpa} />)}
       </section>
 
+      {booked.data?.some((x) => !x.cancelled) && (
+        <section className="card space-y-2">
+          <h2 className="font-display text-lg font-bold">Coming up</h2>
+          <p className="text-sm text-muted">Orders booked for the next 7 days</p>
+          {[...booked.data].reverse().filter((x) => !x.cancelled).map((x) => (
+            <a key={x._id} href={`#/orders/${x._id}`} className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
+              <span><span className="font-semibold">{fmtDay(x.date)}</span> · {x.customer?.name}{x.kind === 'party' && <span className="chip chip-accent ml-2">party</span>}</span>
+              <span className="text-sm text-muted">{vesselText(x.qty)}</span>
+            </a>
+          ))}
+        </section>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-3">
         <Block title={`Phera sales ${period}`} sub="Prepaid route sales, by team">
           {!teams.length && <p className="border-t border-line pt-3 text-sm text-muted">No pheras recorded {period}.</p>}
           {teams.map((t) => {
             const sold = addUp(t.rounds, (p) => p.sold);
-            return <Row key={t.id} label={t.name} hint={`${plural(t.rounds.length, 'round')} · ${vesselText(sold) || 'nothing sold yet'}`} value={`${count(sold)} items`} />;
+            return <Row key={t.id} label={t.name} hint={`${plural(t.rounds.length, 'round')}${t.rounds.some((r) => !r.endTime) ? ` (${t.rounds.filter((r) => !r.endTime).length} out now)` : ''} · ${vesselText(sold) || 'nothing sold yet'}`} value={`${count(sold)} items`} />;
           })}
           <a href="#/pheras" className="block text-sm font-semibold text-accent underline">Open pheras</a>
         </Block>

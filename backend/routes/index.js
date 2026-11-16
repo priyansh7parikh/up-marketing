@@ -4,13 +4,15 @@ const mongoose = require('mongoose');
 const { requireRole, hashPassword } = require('../lib/auth');
 const { asUser, AuditLog } = require('../lib/audit');
 const { PRODUCTS, day, summarizeAll, statement } = require('../lib/balances');
-const { normalizePhone, MOBILE, Customer, Product, Order, Collection, Settlement, Settings, User, Team, Phera } = require('../models');
+const { Counter, normalizePhone, MOBILE, Customer, Product, Order, Collection, Settlement, Settings, User, Team, Phera } = require('../models');
 
 const api = express.Router();
 const admin = requireRole('admin');
 const h = (fn) => (req, res, next) => fn(req, res, next).catch(next); // Express 4 doesn't catch async errors
 const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => obj?.[k] !== undefined).map((k) => [k, obj[k]]));
 const today = () => day(new Date());
+// Lists stop here; the screens warn when a list is this long (pick fewer days). ~100 entries/day → 50 days.
+const LIST_MAX = 5000;
 const notFound = (res) => res.status(404).json({ error: 'Not found' });
 const who = 'name';
 
@@ -55,6 +57,20 @@ async function fixCustomerPhones() {
     }
   });
   await Customer.syncIndexes();
+}
+
+// One-time: give entries made before numbering a number, oldest first. Raw writes so it doesn't flood Edit history.
+async function numberOldEntries() {
+  for (const M of [Order, Collection]) {
+    const todo = await M.find({ no: null }, '_id').sort('date createdAt').lean();
+    if (!todo.length) continue;
+    // Start after the counter (not the highest number left), so a deleted entry's number is never reused.
+    const top = Math.max((await Counter.findById(M.modelName).lean())?.n || 0, (await M.findOne({ no: mongoose.trusted({ $ne: null }) }, 'no').sort('-no').lean())?.no || 0);
+    for (const [i, d] of todo.entries()) await M.collection.updateOne({ _id: d._id }, { $set: { no: top + i + 1 } });
+    await Counter.collection.updateOne({ _id: M.modelName }, { $max: { n: top + todo.length } }, { upsert: true });
+    await M.syncIndexes();
+    console.log(`${M.modelName}: numbered ${todo.length} older entries`);
+  }
 }
 
 api.get('/products', h(async (req, res) => {
@@ -104,18 +120,23 @@ api.put('/settings', admin, h(async (req, res) => {
 // ---- customers ----
 const CUSTOMER_FIELDS = ['name', 'nameGu', 'phone', 'address', 'category', 'notes'];
 
-async function ledgerDocs(filter = {}) {
-  const q = (M) => M.find(filter).populate('createdBy updatedBy', who).lean();
+// Only what the balance math reads; the customer list needs no names or addresses from every old entry.
+const LEDGER_FIELDS = 'customer date dueDate qty emptiesBack total paidAmount cancelled returned amount lost';
+async function ledgerDocs(filter = {}, { full = true } = {}) {
+  const q = (M) => (full ? M.find(filter).populate('createdBy updatedBy', who) : M.find(filter, LEDGER_FIELDS)).lean();
   const [orders, collections, settlements] = await Promise.all([q(Order), q(Collection), q(Settlement)]);
   return { orders, collections, settlements };
 }
 
 api.get('/customers', h(async (req, res) => {
-  const [customers, docs] = await Promise.all([Customer.find().sort('name').lean(), ledgerDocs()]);
+  const [customers, docs] = await Promise.all([Customer.find().sort('name').lean(), ledgerDocs({}, { full: false })]);
   const sums = summarizeAll(docs, today());
   const none = { since: null, due: null, daysOld: 0, daysLate: 0, pending: false };
   const empty = { held: {}, owed: 0, credit: 0, pending: false, overdue: false, qty: none, money: none };
-  res.json(customers.map((c) => ({ ...c, ...(sums.get(String(c._id)) || empty) })));
+  // Admins can find a customer by any address used on their orders; staff never see old addresses.
+  const used = req.user.role !== 'admin' ? [] : await Order.aggregate([{ $match: { address: { $gt: '' } } }, { $group: { _id: '$customer', list: { $addToSet: '$address' } } }]);
+  const addresses = new Map(used.map((a) => [String(a._id), a.list]));
+  res.json(customers.map((c) => ({ ...c, ...(sums.get(String(c._id)) || empty), ...(addresses.has(String(c._id)) && { addresses: addresses.get(String(c._id)) }) })));
 }));
 
 api.get('/customers/:id', h(async (req, res) => {
@@ -138,6 +159,7 @@ api.post('/customers', h(async (req, res) => {
 api.put('/customers/:id', h(async (req, res) => {
   const c = await Customer.findById(req.params.id);
   if (!c) return notFound(res);
+  await sameVersion(c, req.body, 'customer');
   const body = pick(req.body, CUSTOMER_FIELDS);
   // The number is the account, so only an admin may change it.
   if (body.phone !== undefined && normalizePhone(body.phone) !== c.phone && req.user.role !== 'admin') {
@@ -168,7 +190,7 @@ function dateFilter({ from, to, customer }) {
 }
 
 // ---- orders ----
-const ORDER_FIELDS = ['cancelled', 'date', 'customer', 'kind', 'address', 'qty', 'emptiesBack', 'deliveryType', 'deliveryCharge', 'paidAmount', 'method', 'dueDate'];
+const ORDER_FIELDS = ['cancelled', 'cancelReason', 'date', 'customer', 'kind', 'address', 'qty', 'emptiesBack', 'deliveryType', 'deliveryCharge', 'paidAmount', 'method', 'dueDate'];
 
 async function priceOrder(order) {
   // Prices are fixed when the order is made; switching it between regular and party re-reads that price list.
@@ -189,10 +211,37 @@ async function checkSelling(before, after, field) {
   if (off.length) throw Object.assign(new Error(`${off.map((p) => p.name).join(', ')} is switched off for ${SELL[field]}. Switch it on under Admin to give it out.`), { status: 400 });
 }
 
+// The form sends the version (__v) it loaded. If someone saved since, refuse instead of silently undoing their change.
+// Quick actions (cancel, UPI received) send no version: they only touch their own fields.
+async function sameVersion(doc, body, what) {
+  if (body?.__v === undefined || Number(body.__v) === doc.__v) return;
+  const by = doc.updatedBy && (await User.findById(doc.updatedBy, 'name').lean())?.name;
+  const at = doc.updatedAt?.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+  throw Object.assign(new Error(`${by || 'Someone'} changed this ${what} at ${at} while you had it open. Reload to see their change, then make yours again.`), { status: 409 });
+}
+
+function needReason(doc) {
+  if (doc.isModified('cancelled') && doc.cancelled && !doc.cancelReason?.trim()) throw Object.assign(new Error('Say why it is cancelled'), { status: 400 });
+}
+// The form sends a key once per entry: a double tap or a retry after the network dropped gets the first save back.
+const once = (Model, save) => h(async (req, res) => {
+  const key = req.body.key ? String(req.body.key) : undefined;
+  const dup = key && (await Model.findOne({ key }));
+  if (dup) return res.json(dup);
+  try {
+    res.status(201).json(await save(new Model({ key }), req));
+  } catch (e) {
+    if (e.code === 11000 && e.keyPattern?.key) return res.json(await Model.findOne({ key })); // two taps landed together
+    throw e;
+  }
+});
+
 async function saveOrder(order, body) {
+  await sameVersion(order, body, 'order');
   const before = counts(order.qty);
   const kind = order.kind;
   order.set(pick(body, ORDER_FIELDS));
+  needReason(order);
   await checkSelling(order.kind === kind ? before : counts(), order.qty, order.kind === 'party' ? 'sellParty' : 'sellRegular'); // switching type = a new price list
   if (order.dueDate === '') order.dueDate = undefined;
   if (order.isModified('customer') && !(await Customer.exists({ _id: order.customer }))) {
@@ -211,7 +260,7 @@ async function saveOrder(order, body) {
 api.get('/orders', h(async (req, res) => {
   const filter = dateFilter(req.query);
   if (!filter) return res.status(400).json({ error: 'from/to must be YYYY-MM-DD' });
-  const q = Order.find(filter).sort('-date -createdAt').limit(500)
+  const q = Order.find(filter).sort('-date -createdAt').limit(LIST_MAX)
     .populate('customer', 'name nameGu phone').populate('createdBy updatedBy', who);
   res.json(await q.lean());
 }));
@@ -221,7 +270,7 @@ api.get('/orders/:id', h(async (req, res) => {
   return o ? res.json(o) : notFound(res);
 }));
 
-api.post('/orders', h(async (req, res) => res.status(201).json(await saveOrder(new Order(), req.body))));
+api.post('/orders', once(Order, (o, req) => saveOrder(o, req.body)));
 
 api.put('/orders/:id', h(async (req, res) => {
   const o = await Order.findById(req.params.id);
@@ -236,11 +285,13 @@ api.delete('/orders/:id', admin, h(async (req, res) => {
 }));
 
 // ---- returns / collections (vessels back and money received after delivery) ----
-const COLLECTION_FIELDS = ['cancelled', 'date', 'customer', 'returned', 'amount', 'method', 'collectedBy'];
+const COLLECTION_FIELDS = ['cancelled', 'cancelReason', 'date', 'customer', 'returned', 'amount', 'method', 'collectedBy'];
 const withPeople = (q) => q.populate('customer', 'name nameGu phone').populate('createdBy updatedBy collectedBy', who);
 
 async function saveCollection(c, body, user) {
+  await sameVersion(c, body, 'return');
   c.set(pick(body, COLLECTION_FIELDS));
+  needReason(c);
   if (!c.collectedBy) c.collectedBy = user.id;
   if (c.isModified('customer') && !(await Customer.exists({ _id: c.customer }))) throw Object.assign(new Error('Unknown customer'), { status: 400 });
   if (c.isModified('collectedBy') && !(await User.exists({ _id: c.collectedBy, active: true }))) throw Object.assign(new Error('Unknown staff member'), { status: 400 });
@@ -252,7 +303,7 @@ async function saveCollection(c, body, user) {
 api.get('/collections', h(async (req, res) => {
   const filter = dateFilter(req.query);
   if (!filter) return res.status(400).json({ error: 'from/to must be YYYY-MM-DD' });
-  res.json(await withPeople(Collection.find(filter).sort('-date -createdAt').limit(500)).lean());
+  res.json(await withPeople(Collection.find(filter).sort('-date -createdAt').limit(LIST_MAX)).lean());
 }));
 
 api.get('/collections/:id', h(async (req, res) => {
@@ -260,7 +311,7 @@ api.get('/collections/:id', h(async (req, res) => {
   return c ? res.json(c) : notFound(res);
 }));
 
-api.post('/collections', h(async (req, res) => res.status(201).json(await saveCollection(new Collection(), req.body, req.user))));
+api.post('/collections', once(Collection, (c, req) => saveCollection(c, req.body, req.user)));
 
 api.put('/collections/:id', h(async (req, res) => {
   const c = await Collection.findById(req.params.id);
@@ -289,11 +340,12 @@ api.put('/teams/:id', admin, h(async (req, res) => {
 
 // ---- pheras (delivery rounds) ----
 const PHERA_FIELDS = ['date', 'team', 'startTime', 'endTime', 'filledOut', 'filledBack', 'emptiesBack'];
-// sold = filled out − filled back. Computed, never stored, so it can't disagree with the counts.
-const withSold = (p) => ({ ...p, sold: Object.fromEntries(PRODUCTS.map((k) => [k, (p.filledOut?.[k] || 0) - (p.filledBack?.[k] || 0)])) });
+// sold = filled out − filled back, once the round is closed (still out = not known yet). Computed, never stored.
+const withSold = (p) => ({ ...p, sold: Object.fromEntries(PRODUCTS.map((k) => [k, p.endTime ? (p.filledOut?.[k] || 0) - (p.filledBack?.[k] || 0) : 0])) });
 const pheraPeople = (q) => q.populate('team', 'name').populate('createdBy updatedBy', who);
 
 async function savePhera(p, body) {
+  await sameVersion(p, body, 'round');
   const before = counts(p.filledOut);
   p.set(pick(body, PHERA_FIELDS));
   await checkSelling(before, p.filledOut, 'sellPhera');
@@ -306,7 +358,7 @@ async function savePhera(p, body) {
 api.get('/pheras', h(async (req, res) => {
   const filter = dateFilter({ from: req.query.from, to: req.query.to });
   if (!filter) return res.status(400).json({ error: 'from/to must be YYYY-MM-DD' });
-  res.json((await pheraPeople(Phera.find(filter).sort('-date -startTime').limit(500)).lean()).map(withSold));
+  res.json((await pheraPeople(Phera.find(filter).sort('-date -startTime').limit(LIST_MAX)).lean()).map(withSold));
 }));
 
 api.get('/pheras/:id', h(async (req, res) => {
@@ -378,6 +430,8 @@ api.put('/users/:id', admin, h(async (req, res) => {
 }));
 
 // ---- edit history (admin) ----
+const RESTORE = { Order, Collection, Settlement, Phera, Customer, Team };
+const HELD = /^(qty|emptiesBack|returned|filledOut|filledBack|lost)\.|^(paidAmount|deliveryCharge|amount|method|address|reason|cancelReason|kind)$/;
 api.get('/audit', admin, h(async (req, res) => {
   const filter = {};
   if (req.query.role === 'employee') filter.role = 'employee';
@@ -387,7 +441,7 @@ api.get('/audit', admin, h(async (req, res) => {
   const ids = (model) => logs.filter((l) => l.model === model).map((l) => l.docId);
   const load = async (M, fields) => new Map((await M.find({ _id: mongoose.trusted({ $in: ids(M.modelName) }) }, fields).lean()).map((d) => [String(d._id), d]));
   const [orders, cols, sets, pheras, custs, teams, prods] = await Promise.all([
-    load(Order, 'customer date'), load(Collection, 'customer date'), load(Settlement, 'customer date'),
+    load(Order, 'customer date no'), load(Collection, 'customer date no'), load(Settlement, 'customer date'),
     load(Phera, 'team date'), load(Customer, 'name'), load(Team, 'name'), load(Product, 'name'),
   ]);
   const live = { Order: orders, Collection: cols, Settlement: sets, Phera: pheras, Customer: custs, Team: teams, Product: prods };
@@ -402,9 +456,26 @@ api.get('/audit', admin, h(async (req, res) => {
 
   res.json(logs.map((l) => {
     const d = doc(l);
-    const about = [names.get(String(d.customer || d.team || '')), d.name, d.date].filter(Boolean).join(' · ');
-    return { _id: l._id, at: l.at, byName: l.byName || 'system', role: l.role, action: l.action, what: WORD[l.model] || l.model, about, changes: l.changes || null };
+    const about = [d.no && `#${d.no}`, names.get(String(d.customer || d.team || '')), d.name, d.date].filter(Boolean).join(' · ');
+    // A delete has no diff; show what the entry held (non-zero counts and money) so nothing vanishes unseen.
+    const held = l.action === 'delete' ? Object.fromEntries(Object.entries(l.snapshot || {}).flatMap(([k, v]) => (
+      v && typeof v === 'object' && !Array.isArray(v) && !mongoose.isValidObjectId(v) ? Object.entries(v).map(([p, n]) => [`${k}.${p}`, n]) : [[k, v]]
+    )).filter(([k, v]) => HELD.test(k) && v)) : null;
+    return { _id: l._id, at: l.at, byName: l.byName || 'system', role: l.role, action: l.action, what: WORD[l.model] || l.model, about, changes: l.changes || null, held, restorable: l.action === 'delete' && Boolean(RESTORE[l.model]) };
   }));
 }));
 
-module.exports = { api, publicInfo, seedProducts, fixCustomerPhones };
+// Put a deleted entry back exactly as it was (same id, number and who entered it), from the copy kept at delete time.
+api.post('/audit/:id/restore', admin, h(async (req, res) => {
+  const log = await AuditLog.findById(req.params.id).lean();
+  const M = log?.action === 'delete' && RESTORE[log.model];
+  if (!M || !log.snapshot) return res.status(404).json({ error: 'Nothing to restore.' });
+  if (await M.exists({ _id: log.docId })) return res.status(409).json({ error: 'This entry is already back.' });
+  if (log.snapshot.customer && !(await Customer.exists({ _id: log.snapshot.customer }))) return res.status(409).json({ error: 'Its customer was deleted too. Restore the customer first.' });
+  const doc = new M(log.snapshot);
+  doc.$locals.restored = true;
+  await doc.save();
+  res.json({ ok: true });
+}));
+
+module.exports = { api, publicInfo, seedProducts, fixCustomerPhones, numberOldEntries };

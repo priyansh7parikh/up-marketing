@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
-import { Field, Icon, PRODUCTS, PageHead, Status, Stepper, fmtDay, go, today, useApp, useLoad, vesselText } from './ui.jsx';
+import { Field, Icon, PRODUCTS, PageHead, Status, Stepper, fmtDay, go, today, useApp, useLoad, vesselText, TooMany } from './ui.jsx';
 
 const zero = () => Object.fromEntries(PRODUCTS.map((p) => [p, 0]));
 const nowTime = () => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(new Date());
@@ -38,6 +38,7 @@ export function Pheras() {
         <Field label="To"><input className="input" type="date" value={to} min={from} max={today()} onChange={(e) => setTo(e.target.value)} /></Field>
       </div>
       <Status {...status} />
+      <TooMany list={data} />
 
       {data && (
         <div className="card overflow-hidden p-0">
@@ -95,7 +96,7 @@ export function Pheras() {
                             <td className="text-right">{p.filledOut?.[k] || 0}</td>
                             <td className="text-right">{p.filledBack?.[k] || 0}</td>
                             <td className="text-right">{p.emptiesBack?.[k] || 0}</td>
-                            <td className="text-right font-bold text-accent">{p.sold?.[k] || 0}</td>
+                            <td className="text-right font-bold text-accent">{p.endTime ? p.sold?.[k] || 0 : '–'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -146,7 +147,7 @@ export function PheraForm({ id }) {
     setBusy(true);
     setError('');
     try {
-      if (id) await api('PUT', `/pheras/${id}`, form); else await api('POST', '/pheras', form);
+      if (id) await api('PUT', `/pheras/${id}`, { ...form, __v: existing.data.__v }); else await api('POST', '/pheras', form);
       go('/pheras');
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
