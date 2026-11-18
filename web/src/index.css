@@ -32,6 +32,8 @@ body {
   color: var(--color-fg);
   font-family: var(--font-sans);
   font-size: 15px;
+  letter-spacing: 0.01em; /* Plus Jakarta is tight at small sizes; headings keep their own tracking */
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 

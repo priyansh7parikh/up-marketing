@@ -104,7 +104,8 @@ function Shell({ user, onLogout, active, showFab, children }) {
         <button className="text-xs text-side-fg underline" onClick={onLogout}>Sign out</button>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 p-4 pb-24 sm:p-6 sm:pb-24 lg:p-10 lg:pb-10">{children}</main>
+      {/* Phone: room at the end for the bottom tabs (56px) and the New order button above them (to 124px), so nothing stays hidden */}
+      <main className={`mx-auto w-full max-w-6xl flex-1 p-4 sm:p-6 lg:p-10 lg:pb-10 ${showFab ? 'pb-36 sm:pb-36' : 'pb-24 sm:pb-24'}`}>{children}</main>
 
       {/* Phone: the most common action is always one tap away */}
       {showFab && <a href="#/orders/new" className="btn btn-primary fixed right-4 bottom-20 z-10 rounded-full px-5 shadow-lg lg:hidden"><Icon name="plus" className="h-4 w-4" /> New order</a>}

@@ -111,7 +111,7 @@ export default function Today() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="h1">{view === 'week' ? 'This week' : 'Today'}</h1>
-          <p className="mt-1 text-muted">{view === 'week' ? `${fmtDay(from)} to ${fmtDay(today())}` : dateLine} · {user.name}</p>
+          <p className="mt-1 text-muted">{view === 'week' ? (from === today() ? fmtDay(from) : `${fmtDay(from)} to ${fmtDay(today())}`) : dateLine}<span className="mx-1.5">·</span>{user.name}</p>
         </div>
         {admin && (
           <div role="radiogroup" aria-label="Report period" className="flex self-start rounded-full border border-line bg-surface p-1">
